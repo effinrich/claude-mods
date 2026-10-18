@@ -1,0 +1,28 @@
+{
+  "name": "compaction-guard",
+  "version": "0.1.0",
+  "description": "Saves the task, plan and recent asks to a handoff file before each compaction, puts it back after, and warns when compaction starts thrashing.",
+  "author": {
+    "name": "Rich Tillman"
+  },
+  "userConfig": {
+    "handoffPath": {
+      "type": "string",
+      "title": "Handoff file",
+      "description": "Leave empty to keep one handoff per project in ~/.claude/handoffs. A relative path is written inside the project instead.",
+      "default": ""
+    },
+    "thrashCount": {
+      "type": "number",
+      "title": "Thrash count",
+      "description": "Compactions within the window that count as thrashing.",
+      "default": 3
+    },
+    "thrashWindowMinutes": {
+      "type": "number",
+      "title": "Thrash window (minutes)",
+      "description": "How far back compactions are counted.",
+      "default": 10
+    }
+  }
+}

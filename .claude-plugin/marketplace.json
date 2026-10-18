@@ -1,0 +1,16 @@
+{
+  "name": "claude-mods",
+  "owner": { "name": "Rich Tillman" },
+  "plugins": [
+    {
+      "name": "compaction-guard",
+      "source": "./compaction-guard",
+      "description": "Saves the task, plan and recent asks before each compaction, puts them back after, and warns when compaction thrashes."
+    },
+    {
+      "name": "context-audit",
+      "source": "./context-audit",
+      "description": "Measures the fixed context every turn carries and flags changes to global CLAUDE.md, plugins and hooks."
+    }
+  ]
+}
