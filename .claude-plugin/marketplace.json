@@ -1,6 +1,8 @@
 {
   "name": "claude-mods",
-  "owner": { "name": "Rich Tillman" },
+  "owner": {
+    "name": "Rich Tillman"
+  },
   "description": "Claude Code mods for context hygiene, guardrails and fewer wasted turns.",
   "plugins": [
     {
@@ -27,6 +29,11 @@
       "name": "guardrails",
       "source": "./guardrails",
       "description": "Blocks out-of-spec edits, made-up packages, check-weakening edits and destructive git; gates finishing, commits and /ship on checks."
+    },
+    {
+      "name": "default-skills",
+      "source": "./default-skills",
+      "description": "Pins chosen skills (ponytail by default) into every session's system prompt so they stay on through compaction."
     }
   ]
 }

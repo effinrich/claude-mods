@@ -41,6 +41,15 @@ A prompt over 1500 characters with no spec yet is saved there as a draft for you
 
 Settings in `/config`: end-of-turn gate, system prompt line, spec drafts, context hold threshold, extra allowed imports, check timeout.
 
+## default-skills
+
+Pins skills into the system prompt of every session, as if you had run them at the start, and keeps them on through compaction (no more re-running `/ponytail:ponytail full` after a compact). It reads each skill from your own installs (plugin cache, `~/.claude/skills`, or the project's `.claude/skills`), so no third-party skill text lives in this repo.
+
+- Default: `ponytail:ponytail full`. Change the list in `/config` (comma-separated, `plugin:skill args`).
+- `/default-skills` shows what is pinned, from where, and roughly how many tokens it adds per turn.
+- Each pinned skill is sent with every turn (cached with the system prompt), and is cut at 16,000 characters.
+- Skills that run shell commands while they expand (`!` lines) are pinned as written, not run.
+
 ## compaction-guard
 
 Before each compaction it saves the original task, the latest plan, todos, recent prompts and touched files to `~/.claude/handoffs/<project>-<hash>.md`. After the compaction it adds that handoff back into context. Three compactions within ten minutes raise a warning to fork.
@@ -72,6 +81,7 @@ At the prompt of a terminal session, one line per mod you want:
 /plugin install context-audit --marketplace effinrich/claude-mods
 /plugin install context-meter --marketplace effinrich/claude-mods
 /plugin install cli-passthrough --marketplace effinrich/claude-mods
+/plugin install default-skills --marketplace effinrich/claude-mods
 ```
 
 Answer `y` to add the marketplace, then pick the user scope. From a shell, use `claude plugin install <mod> --marketplace effinrich/claude-mods`. In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with `effinrich/claude-mods`, then Add plugin.
