@@ -5,7 +5,7 @@ type Loaded = { label: string; text: string; path: string; isClipped: boolean }
 type Missing = { label: string }
 type LoadResult = { loaded: readonly Loaded[]; missing: readonly Missing[] }
 
-const DEFAULT_SKILLS = 'ponytail:ponytail full, feature-based-architecture'
+const DEFAULT_SKILLS = 'ponytail:ponytail full, feature-based-architecture, default-skills:plain-writing'
 
 let cache: LoadResult | undefined
 

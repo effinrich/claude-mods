@@ -30,13 +30,14 @@ Needs Node 20 or newer. MIT licensed.
 | Block made-up packages | ✓ | ✓ | ◐ | ◐ |
 | Block destructive git and `--no-verify` | ✓ | ✓ | ✓ | ✓ |
 | Commit gate on checks | ✓ | ✓ | ✓ | ✓ |
+| Plain wording in commit, PR and issue text | ✓ | ✓ | ✓ | ✓ |
 | End-of-turn check gate (2 retries) | ✓ Stop | ✓ AfterAgent | ✓ stop follow-up | ✓ agentStop |
 | Long prompt saved as `.claude/spec.md` draft | ✓ | ✓ | ✓ | ✓ |
 | Handoff saved before compaction | ✓ | ✓ | ✓ | ✓ |
 | Handoff returned after compaction | ✓ SessionStart `compact` | ✓ next prompt | ◐ next session start | ◐ next session start |
 | Drift check on global instruction files | ✓ | ✓ | ✓ | ✓ |
 | `/ship` and `/checks` | skills (`$ship`) | `/ship` command | skills | skills |
-| Default skills (ponytail) always on | ✓ AGENTS.md | ✓ GEMINI.md | ◐ skill copied; add the rule in Cursor Settings → Rules, or per repo with `project` | ✓ copilot-instructions.md |
+| Default skills (ponytail, plain-writing) always on | ✓ AGENTS.md | ✓ GEMINI.md | ◐ skill copied; add the rule in Cursor Settings → Rules, or per repo with `project` | ✓ copilot-instructions.md |
 
 The end-of-turn gate and the commit gate skip the check run when none of the files edited this session changed since the checks last passed.
 
@@ -86,7 +87,7 @@ Turn capture off again afterwards. The log rolls over at 2 MB.
 
 1. **Each person, once per machine**: install Node 20 or newer, then run `npx github:effinrich/claude-mods`. Hooks and skills live in each user's own config, so nobody can install them for someone else.
 2. **Each shared repo, once**: run `npx github:effinrich/claude-mods project` and commit `.cursor/rules/claude-mods.mdc`, `AGENTS.md` and `.claude/settings.json`. Claude Code then offers the claude-mods plugins to everyone who opens the repo.
-3. **Default skills** (`ponytail`, `feature-based-architecture`) are not part of this repo. Each person's install copies them from their own Claude Code installs into `~/.agents/skills/`. Anyone who lacks a skill just skips it; nothing breaks.
+3. **Default skills**: `plain-writing` ships with claude-mods, so everyone gets it. `ponytail` and `feature-based-architecture` are not part of this repo; each person's install copies them from their own Claude Code installs into `~/.agents/skills/`. Anyone who lacks a skill just skips it; nothing breaks.
 4. **First-run approvals**, per person and tool:
    - Claude Code: when you open the repo, accept the claude-mods marketplace and the plugins it lists.
    - Codex: approve the hooks in `/hooks`; they do not run until you do.
@@ -123,6 +124,7 @@ A prompt over 1500 characters with no spec yet is saved there as a draft for you
 - Imports of packages that are neither installed nor declared in any `package.json` above the file (type-only imports, relatives, tsconfig path aliases and Node builtins are fine).
 - Edits that weaken checks: `.skip` / `.only`, `@ts-ignore`, `eslint-disable`, new `any` types. Only what the edit adds counts.
 - Hand edits to lockfiles.
+- `git commit`, `git tag` and `gh pr`/`gh issue` text with an em dash or a stock phrase (delve, seamless, leverage, robust, comprehensive, "it's worth noting", "I hope this helps"). Claude rewords it and runs the command again. The list is short so it rarely fires on real text.
 - `--no-verify`, `git commit -n`, `git push --force` (lease is fine), `git reset --hard`, `git checkout -- .`, `git clean -f`, `rm -rf ~` or `/`. You can still run these yourself with `!`.
 - Finishing a turn that edited code while checks fail. Claude is sent back up to 2 times, then stops and reports.
 - `git commit` while checks fail.
@@ -137,13 +139,14 @@ A prompt over 1500 characters with no spec yet is saved there as a draft for you
 - `/checks` runs the checks now.
 - `/guard` shows status; `/guard off` and `/guard on` switch it for the session.
 
-Settings in `/config`: end-of-turn gate, system prompt line, spec drafts, context hold threshold, extra allowed imports, check timeout.
+Settings in `/config`: end-of-turn gate, system prompt line, spec drafts, writing check, context hold threshold, extra allowed imports, check timeout.
 
 ### default-skills
 
-Pins skills into the system prompt of every session, as if you had run them at the start, and keeps them on through compaction (no more re-running `/ponytail:ponytail full` after a compact). It reads each skill from your own installs (plugin cache, `~/.claude/skills`, skills synced from your claude.ai account, or the project's `.claude/skills`), so no third-party skill text lives in this repo. A configured skill you don't have is skipped.
+Pins skills into the system prompt of every session, as if you had run them at the start, and keeps them on through compaction (no more re-running `/ponytail:ponytail full` after a compact). It reads each skill from your own installs (plugin cache, `~/.claude/skills`, skills synced from your claude.ai account, or the project's `.claude/skills`), so no third-party skill text lives in this repo. A configured skill you don't have is skipped. The one exception is `plain-writing`, which this repo wrote and ships.
 
-- Default: `ponytail:ponytail full, feature-based-architecture`. Change the list in `/config` (comma-separated, `plugin:skill args`).
+- Default: `ponytail:ponytail full, feature-based-architecture, default-skills:plain-writing`. Change the list in `/config` (comma-separated, `plugin:skill args`).
+- `plain-writing` (about 400 tokens per turn) covers anything a person reads: lead with the answer, plain words, no em dashes or formula (not-X-but-Y, groups of three), length that fits, and no "done" or "tests pass" without having run them. Drop it from the list to turn it off.
 - `/default-skills` shows what is pinned, from where, and roughly how many tokens it adds per turn.
 - Each pinned skill is sent with every turn (cached with the system prompt), and is cut at 16,000 characters.
 - Skills that run shell commands while they expand (`!` lines) are pinned as written, not run.
@@ -184,6 +187,16 @@ At the prompt of a terminal session, one line per mod you want:
 
 Answer `y` to add the marketplace, then pick the user scope. From a shell, use `claude plugin install <mod> --marketplace effinrich/claude-mods`. In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with `effinrich/claude-mods`, then Add plugin.
 
+
+## Skills that pair well, and ones to skip
+
+These were reviewed for this repo on 2026-10-19. None are bundled.
+
+- **Matt Pocock's skills** (github.com/mattpocock/skills, MIT): use on demand. His flow is `grill-me`, then `to-spec`, `to-tickets`, then `implement` with `tdd`. It fits guardrails: the end-of-turn gate runs after his red-green cycle finishes inside a turn, and his ticket files live in `.scratch/`, not `.claude/spec.md`. Two things to know. His specs leave out file paths, so put the paths a ticket may touch in `.claude/spec.md` `scope` yourself. And give prefactor tickets their own scope, or the scope block will stop them.
+- **Claude Code `/goal`**: use on demand with a check as the goal ("`pnpm test` passes and …"). Guardrails still blocks bad edits and commits inside the loop. Avoid third-party goal loops with high continuation caps.
+- **humanizer** (blader/humanizer): good for a one-off rewrite of a long document. At about 7,000 tokens it is too big to pin; `plain-writing` covers the same ground in about 400.
+- **superdesign**: skipped. It sends your code to a hosted service and needs an account.
+- **ultrawork** (oh-my-opencode): skipped. It is an OpenCode keyword hook, not a portable skill, uses a source-available license, and published reviews report about 3x the tokens and runaway subagent loops.
 
 ## Notes
 

@@ -1,6 +1,6 @@
 {
   "name": "guardrails",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Blocks edits outside the task spec, made-up packages, check-weakening edits and destructive git; gates finishing, committing and /ship on passing checks.",
   "author": {
     "name": "Rich Tillman"
@@ -22,6 +22,12 @@
       "type": "boolean",
       "title": "Save long prompts as a spec draft",
       "description": "A prompt over 1500 characters with no .claude/spec.md yet is saved there as a draft.",
+      "default": true
+    },
+    "writingGate": {
+      "type": "boolean",
+      "title": "Check commit and PR text for AI phrasing",
+      "description": "Blocks git commit, git tag and gh pr/issue text that uses em dashes or stock phrases (delve, seamless, leverage, robust...) until it is reworded.",
       "default": true
     },
     "newTaskPercent": {

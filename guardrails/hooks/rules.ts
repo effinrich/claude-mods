@@ -41,3 +41,25 @@ export const judgeWeakening = (newCode: string, oldCode: string, path: string): 
   }
   return undefined
 }
+
+// Commands whose text lands in front of people: commit messages, tags, PR and issue text.
+const PROSE_COMMAND = /\bgit\s+(commit|tag)\b|\bgh\s+(pr|issue)\s+(create|edit|comment|review)\b/
+
+// Few and unambiguous on purpose: each one blocks a commit until the message is reworded.
+const SLOP: readonly { pattern: RegExp; label: string }[] = [
+  { pattern: /—/, label: 'an em dash' },
+  { pattern: /\bdelv(e|es|ed|ing)\b/i, label: '"delve"' },
+  { pattern: /\bseamless(ly)?\b/i, label: '"seamless"' },
+  { pattern: /\bleverag(e|es|ed|ing)\b/i, label: '"leverage"' },
+  { pattern: /\brobust(ly|ness)?\b/i, label: '"robust"' },
+  { pattern: /\bcomprehensive\b/i, label: '"comprehensive"' },
+  { pattern: /\bit['’]?s worth noting\b/i, label: '"it\'s worth noting"' },
+  { pattern: /\b(a testament to|rich tapestry|game[- ]changer|in today['’]s fast-paced)\b/i, label: 'stock AI phrasing' },
+  { pattern: /\bI hope this helps\b/i, label: '"I hope this helps"' },
+]
+
+export const judgeProse = (command: string): string | undefined => {
+  if (!PROSE_COMMAND.test(command)) return undefined
+  const hits = SLOP.filter(rule => rule.pattern.test(command)).map(rule => rule.label)
+  return hits.length === 0 ? undefined : `the message uses ${hits.join(', ')}`
+}

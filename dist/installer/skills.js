@@ -1,8 +1,10 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { newestVersion, parseSkillList } from "../core/skills.js";
 import { readText, withBlock } from "./files.js";
 import { instructionsPath } from "./tools.js";
+const packageRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const MANAGED = '<!-- managed by claude-mods -->';
 const MANAGED_FILE = '.claude-mods-managed';
 // ~/.agents/skills is read by Codex, Gemini CLI and Copilot CLI; Cursor reads ~/.cursor/skills.
@@ -58,6 +60,10 @@ export const planCommands = (plan, home, tools, runtimeMain) => {
 // Default skills come from the user's own Claude Code installs: plugin cache, ~/.claude/skills, or skills synced
 // from their claude.ai account (~/.claude/skills/synced/<id>/), and are copied per tool.
 export const findClaudeSkill = (home, ref) => {
+    // Skills claude-mods ships itself come from this package, so every tool gets them without Claude Code.
+    const bundled = ref.plugin === 'default-skills' ? join(packageRoot, ref.plugin, 'skills', ref.skill) : undefined;
+    if (bundled !== undefined && existsSync(join(bundled, 'SKILL.md')))
+        return bundled;
     if (ref.plugin === undefined) {
         const skills = join(home, '.claude', 'skills');
         const synced = join(skills, 'synced');

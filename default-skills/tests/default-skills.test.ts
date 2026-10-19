@@ -92,3 +92,15 @@ test('finds a skill synced from the claude.ai account', { options: { skills: 'fe
 
   expect(sections.some(section => section.text.includes('Organize by feature.'))).toBe(true)
 })
+
+test('pins its own plain-writing skill by default from the installed plugin', async ($, on) => {
+  const skill = '---\nname: plain-writing\ndescription: prose\n---\nNo em dashes; use a period.'
+  world(on, { [`${CACHE}/claude-mods/default-skills/0.3.0/skills/plain-writing/SKILL.md`]: skill })
+
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  const { sections } = await compose($)
+
+  const pinned = sections.find(section => section.id === 'default-skills:default-skills:plain-writing')
+  expect(pinned?.text).toContain('No em dashes')
+  expect(pinned?.text).not.toContain('name: plain-writing')
+})

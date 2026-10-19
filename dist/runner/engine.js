@@ -7,7 +7,7 @@ import { resolveChecks, summarizeFailures } from "../core/checks.js";
 import { diffSnapshots, snapshotFile } from "../core/drift.js";
 import { renderHandoff } from "../core/handoff.js";
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases } from "../core/imports.js";
-import { isGitCommit, isLockfile, judgeCommand, judgeWeakening } from "../core/rules.js";
+import { isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from "../core/rules.js";
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH } from "../core/spec.js";
 import { handoffPath, loadState, log, modsHome, rememberPrompt, rememberTouched, saveState, writeJson, } from "./state.js";
 import { ALLOW } from "./types.js";
@@ -219,6 +219,10 @@ const decideWithState = async (tool, capabilities, config, event, root, state, n
             if (reason !== undefined) {
                 const shown = event.command.length > 80 ? `${event.command.slice(0, 80)}…` : event.command;
                 return { kind: 'deny', reason: `guardrails: blocked \`${shown}\`: ${reason}. If the user wants it, they can run it themselves.` };
+            }
+            const prose = config.writingGate ? judgeProse(event.command) : undefined;
+            if (prose !== undefined) {
+                return { kind: 'deny', reason: `guardrails: ${prose}. Reword it plainly (period, comma or parentheses instead of em dashes; plain words) and run it again.` };
             }
             if (isGitCommit(event.command) && (state.isDirty || state.lastResult !== 'pass')) {
                 if (isUnchangedSincePass(state, root)) {

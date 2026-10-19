@@ -111,3 +111,11 @@ test('a reinstall keeps debug turned on in config.json', () => {
     install();
     assert.equal(JSON.parse(readFileSync(path, 'utf8')).debug, true);
 });
+test('copies the bundled plain-writing skill to every tool without a Claude Code install', () => {
+    install();
+    const skill = read('.agents/skills/plain-writing/SKILL.md');
+    assert.match(skill, /^---\nname: plain-writing\ndescription: .+\n---\n/);
+    assert.ok(skill.split(/\s+/).length < 450, 'pinned every turn, so it must stay short');
+    assert.ok(existsSync(join(home, '.cursor/skills/plain-writing/SKILL.md')));
+    assert.match(read('.codex/AGENTS.md'), /the `plain-writing` skill/);
+});

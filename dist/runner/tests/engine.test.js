@@ -100,3 +100,10 @@ test('skips the end-of-turn checks when no touched file changed since they last 
     await run({ ...base(), kind: 'stop', isRepeat: false });
     assert.equal(runs(), 2);
 });
+test('asks for plain wording in commit messages unless the writing gate is off', async () => {
+    const command = 'git commit -m "Leverage the cache \u2014 faster"';
+    const blocked = await run({ ...base(), kind: 'shell', command });
+    assert.match(blocked.kind === 'deny' ? blocked.reason : '', /"leverage", an em dash|an em dash, "leverage"/);
+    const off = await decide('codex', { promptContext: true }, { ...DEFAULT_CONFIG, writingGate: false }, { ...base(), kind: 'shell', command }, new Date());
+    assert.equal(off.kind, 'allow');
+});

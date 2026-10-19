@@ -3,6 +3,7 @@ export const DEFAULT_CONFIG = {
     mods: { guardrails: true, compactionGuard: true, contextAudit: true },
     stopGate: true,
     draftSpecs: true,
+    writingGate: true,
     allowImports: [],
     checkTimeoutMs: 10 * 60_000,
     debug: false,

@@ -7,7 +7,7 @@ import { resolveChecks, summarizeFailures, type CheckRun } from '../core/checks.
 import { diffSnapshots, snapshotFile, type FileSnapshot, type Snapshot } from '../core/drift.ts'
 import { renderHandoff } from '../core/handoff.ts'
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases } from '../core/imports.ts'
-import { isGitCommit, isLockfile, judgeCommand, judgeWeakening } from '../core/rules.ts'
+import { isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from '../core/rules.ts'
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH, type Spec } from '../core/spec.ts'
 import {
   handoffPath,
@@ -247,6 +247,10 @@ const decideWithState = async (
       if (reason !== undefined) {
         const shown = event.command.length > 80 ? `${event.command.slice(0, 80)}…` : event.command
         return { kind: 'deny', reason: `guardrails: blocked \`${shown}\`: ${reason}. If the user wants it, they can run it themselves.` }
+      }
+      const prose = config.writingGate ? judgeProse(event.command) : undefined
+      if (prose !== undefined) {
+        return { kind: 'deny', reason: `guardrails: ${prose}. Reword it plainly (period, comma or parentheses instead of em dashes; plain words) and run it again.` }
       }
       if (isGitCommit(event.command) && (state.isDirty || state.lastResult !== 'pass')) {
         if (isUnchangedSincePass(state, root)) {

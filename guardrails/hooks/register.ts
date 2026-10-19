@@ -1,13 +1,14 @@
 import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 import { resolveChecks, summarizeFailures, type CheckRun } from './checks.ts'
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases } from './imports.ts'
-import { isGitCommit, isLockfile, judgeCommand, judgeWeakening } from './rules.ts'
+import { isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from './rules.ts'
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH, type Spec } from './spec.ts'
 
 type Config = {
   stopGate: boolean
   promptRule: boolean
   draftSpecs: boolean
+  writingGate: boolean
   newTaskPercent: number
   allowImports: ReadonlySet<string>
   checkTimeoutMs: number
@@ -40,6 +41,8 @@ const SHIP_PROMPT =
   'push the branch, and open a draft PR that says what changed and why. Make no other changes. ' +
   'If any step fails, stop and report it.'
 
+const REWORD = 'Reword it plainly (period, comma or parentheses instead of em dashes; plain words) and run it again.'
+
 const SUGGEST = 'If it needs changing, list it under "Suggestions:" in your reply.'
 
 const state: GuardState = { isOff: false, isDirty: false, lastResult: undefined, stopBlocks: 0, heldPrompt: undefined }
@@ -48,6 +51,7 @@ const readConfig = (options: PluginOptions): Config => ({
   stopGate: options.stopGate !== false,
   promptRule: options.promptRule !== false,
   draftSpecs: options.draftSpecs !== false,
+  writingGate: options.writingGate !== false,
   newTaskPercent:
     typeof options.newTaskPercent === 'number' && options.newTaskPercent > 0 ? options.newTaskPercent : 75,
   allowImports: new Set(
@@ -278,6 +282,8 @@ export const register: Register = (on, options) => {
     if (reason !== undefined) {
       return { deny: `guardrails: blocked \`${clip(e.command)}\`: ${reason}. If the user wants it, they can run it with !.` }
     }
+    const prose = config.writingGate ? judgeProse(e.command) : undefined
+    if (prose !== undefined) return { deny: `guardrails: ${prose}. ${REWORD}` }
     if (isGitCommit(e.command)) {
       const failure = await runChecksIfNeeded($, config)
       if (failure !== undefined) return { deny: `guardrails: commit blocked, checks fail:\n${failure}` }

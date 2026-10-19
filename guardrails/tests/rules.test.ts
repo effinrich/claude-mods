@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 import { resolveChecks, packageManager } from '../hooks/checks.ts'
 import { addedPackages, importedPackages, pathAliases } from '../hooks/imports.ts'
-import { judgeCommand, judgeWeakening } from '../hooks/rules.ts'
+import { judgeCommand, judgeProse, judgeWeakening } from '../hooks/rules.ts'
 import { globToRegExp, judgeScope, parseSpec } from '../hooks/spec.ts'
 
 describe('spec', () => {
@@ -87,6 +87,16 @@ describe('rules', () => {
     ]) {
       expect(judgeCommand(command)).toBeUndefined()
     }
+  })
+
+  test('flags stock AI phrasing in commit, tag, PR and issue text only', () => {
+    expect(judgeProse('git commit -m "Add login \u2014 with retries"')).toBe('the message uses an em dash')
+    expect(judgeProse("gh pr create --title x --body 'A robust, seamless flow'")).toBe('the message uses "seamless", "robust"')
+    expect(judgeProse('gh issue comment 4 --body "Let\'s delve into it"')).toBe('the message uses "delve"')
+    expect(judgeProse("git commit -F - <<'EOF'\nIt's worth noting the cache\nEOF")).toBe('the message uses "it\'s worth noting"')
+    expect(judgeProse('git commit -m "Retry the upload once on a 503"')).toBeUndefined()
+    expect(judgeProse('echo "a robust, seamless thing \u2014 yes"')).toBeUndefined()
+    expect(judgeProse('git log --grep robust')).toBeUndefined()
   })
 
   test('flags edits that weaken checks, only for what they add', () => {

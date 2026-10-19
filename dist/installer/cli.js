@@ -1,6 +1,6 @@
 export const ALL_MODS = ['guardrails', 'compaction-guard', 'context-audit', 'default-skills'];
 export const CLAUDE_EXTRAS = ['context-meter', 'cli-passthrough'];
-export const DEFAULT_SKILLS = 'ponytail:ponytail full, feature-based-architecture';
+export const DEFAULT_SKILLS = 'ponytail:ponytail full, feature-based-architecture, default-skills:plain-writing';
 export const MARKETPLACE = 'effinrich/claude-mods';
 export const flag = (args, name) => {
     const index = args.indexOf(`--${name}`);

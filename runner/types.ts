@@ -43,6 +43,7 @@ export type Config = {
   mods: { guardrails: boolean; compactionGuard: boolean; contextAudit: boolean }
   stopGate: boolean
   draftSpecs: boolean
+  writingGate: boolean
   allowImports: readonly string[]
   checkTimeoutMs: number
   // Append each raw hook payload to ~/.claude-mods/payloads.log (also on with CLAUDE_MODS_DEBUG=1).
@@ -53,6 +54,7 @@ export const DEFAULT_CONFIG: Config = {
   mods: { guardrails: true, compactionGuard: true, contextAudit: true },
   stopGate: true,
   draftSpecs: true,
+  writingGate: true,
   allowImports: [],
   checkTimeoutMs: 10 * 60_000,
   debug: false,
