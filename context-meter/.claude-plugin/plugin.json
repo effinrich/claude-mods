@@ -1,8 +1,10 @@
 {
   "name": "context-meter",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Keeps context use, session cost, compactions, rate limit and model in the status line, with warnings before the window fills.",
-  "author": { "name": "Rich Tillman" },
+  "author": {
+    "name": "Rich Tillman"
+  },
   "userConfig": {
     "warnPercent": {
       "type": "number",

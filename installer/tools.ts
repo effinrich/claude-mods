@@ -61,8 +61,9 @@ export const instructionsPath = (home: string, tool: ToolName): string | undefin
     copilot: join(home, '.copilot', 'copilot-instructions.md'),
   })[tool]
 
+// The absolute Node path from install time: GUI-launched apps (Cursor from the Dock) often lack nvm's PATH.
 export const hookCommand = (runtimeMain: string, tool: ToolName, event: string): string =>
-  `node "${runtimeMain}" ${tool} ${event}`
+  `"${process.execPath}" "${runtimeMain}" ${tool} ${event}`
 
 const isOurs = (entry: unknown): boolean => JSON.stringify(entry).includes(RUNTIME_MARKER)
 

@@ -48,7 +48,8 @@ export const instructionsPath = (home, tool) => ({
     cursor: undefined, // Cursor user rules live in its settings UI, not in a file.
     copilot: join(home, '.copilot', 'copilot-instructions.md'),
 })[tool];
-export const hookCommand = (runtimeMain, tool, event) => `node "${runtimeMain}" ${tool} ${event}`;
+// The absolute Node path from install time: GUI-launched apps (Cursor from the Dock) often lack nvm's PATH.
+export const hookCommand = (runtimeMain, tool, event) => `"${process.execPath}" "${runtimeMain}" ${tool} ${event}`;
 const isOurs = (entry) => JSON.stringify(entry).includes(RUNTIME_MARKER);
 const asArray = (value) => (Array.isArray(value) ? value : []);
 const record = (value) => typeof value === 'object' && value !== null && !Array.isArray(value) ? { ...value } : {};

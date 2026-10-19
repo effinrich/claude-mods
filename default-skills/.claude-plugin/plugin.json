@@ -1,6 +1,6 @@
 {
   "name": "default-skills",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pins chosen skills (ponytail and feature-based-architecture by default) into the system prompt every session, so they are on from the start and survive compaction.",
   "author": {
     "name": "Rich Tillman"

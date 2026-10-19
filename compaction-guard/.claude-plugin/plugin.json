@@ -1,6 +1,6 @@
 {
   "name": "compaction-guard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Saves the task, plan and recent asks to a handoff file before each compaction, puts it back after, and warns when compaction starts thrashing.",
   "author": {
     "name": "Rich Tillman"
