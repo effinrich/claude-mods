@@ -5,7 +5,7 @@ type Loaded = { label: string; text: string; path: string; isClipped: boolean }
 type Missing = { label: string }
 type LoadResult = { loaded: readonly Loaded[]; missing: readonly Missing[] }
 
-const DEFAULT_SKILLS = 'ponytail:ponytail full'
+const DEFAULT_SKILLS = 'ponytail:ponytail full, feature-based-architecture'
 
 let cache: LoadResult | undefined
 
@@ -33,7 +33,9 @@ const findSkill = async ($: EngineInterface, home: string | undefined, root: str
   if (ref.plugin !== undefined) {
     return home === undefined ? undefined : findPluginSkill($, home, { ...ref, plugin: ref.plugin })
   }
-  for (const base of [`${root}/.claude/skills`, ...(home === undefined ? [] : [`${home}/.claude/skills`])]) {
+  // Skills synced from a claude.ai account sit one level down, in ~/.claude/skills/synced/<id>/.
+  const synced = home === undefined ? [] : (await dirNames($, `${home}/.claude/skills/synced`)).map(id => `${home}/.claude/skills/synced/${id}`)
+  for (const base of [`${root}/.claude/skills`, ...(home === undefined ? [] : [`${home}/.claude/skills`]), ...synced]) {
     const skillDir = `${base}/${ref.skill}`
     if (await $.fs.exists(`${skillDir}/SKILL.md`)) return { skillDir, pluginRoot: undefined }
   }

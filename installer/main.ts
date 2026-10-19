@@ -16,7 +16,7 @@ type Choices = { tools: Target[]; mods: ModName[]; skills: string }
 
 const ALL_MODS: readonly ModName[] = ['guardrails', 'compaction-guard', 'context-audit', 'default-skills']
 const CLAUDE_EXTRAS = ['context-meter', 'cli-passthrough'] as const
-const DEFAULT_SKILLS = 'ponytail:ponytail full'
+const DEFAULT_SKILLS = 'ponytail:ponytail full, feature-based-architecture'
 const MARKETPLACE = 'effinrich/claude-mods'
 const BINARIES: Readonly<Record<Target, readonly string[]>> = {
   claude: ['claude'],

@@ -19,7 +19,7 @@ It detects which of the five tools you have and wires each one up. Claude Code g
 
 Options: `--tools claude,codex,gemini,cursor,copilot` (default: detected), `--mods guardrails,compaction-guard,context-audit,default-skills` (default: all), `--skills "ponytail:ponytail full"`, `--dry-run`.
 
-The repo is private, so each machine needs a GitHub credential for it (`gh auth login`, then `gh auth setup-git`). Node 20 or newer.
+Needs Node 20 or newer. MIT licensed.
 
 ### What each tool gets
 
@@ -93,9 +93,9 @@ Settings in `/config`: end-of-turn gate, system prompt line, spec drafts, contex
 
 ### default-skills
 
-Pins skills into the system prompt of every session, as if you had run them at the start, and keeps them on through compaction (no more re-running `/ponytail:ponytail full` after a compact). It reads each skill from your own installs (plugin cache, `~/.claude/skills`, or the project's `.claude/skills`), so no third-party skill text lives in this repo.
+Pins skills into the system prompt of every session, as if you had run them at the start, and keeps them on through compaction (no more re-running `/ponytail:ponytail full` after a compact). It reads each skill from your own installs (plugin cache, `~/.claude/skills`, skills synced from your claude.ai account, or the project's `.claude/skills`), so no third-party skill text lives in this repo. A configured skill you don't have is skipped.
 
-- Default: `ponytail:ponytail full`. Change the list in `/config` (comma-separated, `plugin:skill args`).
+- Default: `ponytail:ponytail full, feature-based-architecture`. Change the list in `/config` (comma-separated, `plugin:skill args`).
 - `/default-skills` shows what is pinned, from where, and roughly how many tokens it adds per turn.
 - Each pinned skill is sent with every turn (cached with the system prompt), and is cut at 16,000 characters.
 - Skills that run shell commands while they expand (`!` lines) are pinned as written, not run.
@@ -136,7 +136,6 @@ At the prompt of a terminal session, one line per mod you want:
 
 Answer `y` to add the marketplace, then pick the user scope. From a shell, use `claude plugin install <mod> --marketplace effinrich/claude-mods`. In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with `effinrich/claude-mods`, then Add plugin.
 
-This repository is private. Installing needs read access on GitHub and a git credential for github.com on the machine (an SSH key, or `gh auth login` then `gh auth setup-git`). The install never prompts for one.
 
 ## Notes
 

@@ -55,11 +55,14 @@ export const planCommands = (plan, home, tools, runtimeMain) => {
         planManagedFile(plan, join(commands, 'checks.toml'), checks && geminiCommand('Run the project checks.', checks));
     }
 };
-// Default skills come from the user's own Claude Code plugin installs (or ~/.claude/skills) and are copied per tool.
+// Default skills come from the user's own Claude Code installs: plugin cache, ~/.claude/skills, or skills synced
+// from their claude.ai account (~/.claude/skills/synced/<id>/), and are copied per tool.
 export const findClaudeSkill = (home, ref) => {
     if (ref.plugin === undefined) {
-        const dir = join(home, '.claude', 'skills', ref.skill);
-        return existsSync(join(dir, 'SKILL.md')) ? dir : undefined;
+        const skills = join(home, '.claude', 'skills');
+        const synced = join(skills, 'synced');
+        const bases = [skills, ...(existsSync(synced) ? readdirSync(synced).map(id => join(synced, id)) : [])];
+        return bases.map(base => join(base, ref.skill)).find(dir => existsSync(join(dir, 'SKILL.md')));
     }
     const cache = join(home, '.claude', 'plugins', 'cache');
     if (!existsSync(cache))

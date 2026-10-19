@@ -10,7 +10,7 @@ import { planCommands, planDefaultSkills, planInstructions } from "./skills.js";
 import { configDir, countOurHooks, hookConfigPath, planHooks } from "./tools.js";
 const ALL_MODS = ['guardrails', 'compaction-guard', 'context-audit', 'default-skills'];
 const CLAUDE_EXTRAS = ['context-meter', 'cli-passthrough'];
-const DEFAULT_SKILLS = 'ponytail:ponytail full';
+const DEFAULT_SKILLS = 'ponytail:ponytail full, feature-based-architecture';
 const MARKETPLACE = 'effinrich/claude-mods';
 const BINARIES = {
     claude: ['claude'],

@@ -1,14 +1,16 @@
 {
   "name": "default-skills",
   "version": "0.1.0",
-  "description": "Pins chosen skills (ponytail by default) into the system prompt every session, so they are on from the start and survive compaction.",
-  "author": { "name": "Rich Tillman" },
+  "description": "Pins chosen skills (ponytail and feature-based-architecture by default) into the system prompt every session, so they are on from the start and survive compaction.",
+  "author": {
+    "name": "Rich Tillman"
+  },
   "userConfig": {
     "skills": {
       "type": "string",
       "title": "Skills to pin",
       "description": "Comma-separated, each as plugin:skill or skill, optionally followed by its arguments (e.g. `ponytail:ponytail full, my-style`). Each skill's text is sent with every turn.",
-      "default": "ponytail:ponytail full"
+      "default": "ponytail:ponytail full, feature-based-architecture"
     }
   }
 }

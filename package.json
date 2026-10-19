@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "description": "Guardrails, compaction handoffs and drift checks for Claude Code, Codex CLI, Gemini CLI, Cursor and Copilot CLI.",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "private": true,
   "author": "Rich Tillman",
   "bin": {

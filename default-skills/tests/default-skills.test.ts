@@ -83,3 +83,12 @@ test('finds project skills and says which configured skills are missing', { opti
   expect(sections.some(section => section.text.includes('Prefer composition.'))).toBe(true)
   expect(toasts.at(-1)).toContain('ghost:gone not found')
 })
+
+test('finds a skill synced from the claude.ai account', { options: { skills: 'feature-based-architecture' } }, async ($, on) => {
+  world(on, { [`${HOME}/.claude/skills/synced/acct-1/feature-based-architecture/SKILL.md`]: '---\nname: feature-based-architecture\n---\nOrganize by feature.' })
+
+  await $.session.start({ cwd: ROOT, surface: 'terminal', isInteractive: true })
+  const { sections } = await compose($)
+
+  expect(sections.some(section => section.text.includes('Organize by feature.'))).toBe(true)
+})
