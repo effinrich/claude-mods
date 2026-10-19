@@ -1,6 +1,7 @@
 {
   "name": "claude-mods",
   "owner": { "name": "Rich Tillman" },
+  "description": "Claude Code mods for context hygiene, guardrails and fewer wasted turns.",
   "plugins": [
     {
       "name": "compaction-guard",
@@ -11,6 +12,21 @@
       "name": "context-audit",
       "source": "./context-audit",
       "description": "Measures the fixed context every turn carries and flags changes to global CLAUDE.md, plugins and hooks."
+    },
+    {
+      "name": "context-meter",
+      "source": "./context-meter",
+      "description": "Context %, session cost, compactions, rate limit and model in the status line, with fork warnings."
+    },
+    {
+      "name": "cli-passthrough",
+      "source": "./cli-passthrough",
+      "description": "Runs `claude plugin …` and `claude mcp …` typed at the prompt directly, without a model turn."
+    },
+    {
+      "name": "guardrails",
+      "source": "./guardrails",
+      "description": "Blocks out-of-spec edits, made-up packages, check-weakening edits and destructive git; gates finishing, commits and /ship on checks."
     }
   ]
 }

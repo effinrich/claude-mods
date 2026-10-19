@@ -1,0 +1,6 @@
+{
+  "name": "cli-passthrough",
+  "version": "0.1.0",
+  "description": "Runs `claude plugin …` and `claude mcp …` typed at the prompt directly, without spending a model turn on them.",
+  "author": { "name": "Rich Tillman" }
+}

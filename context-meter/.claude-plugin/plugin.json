@@ -1,0 +1,20 @@
+{
+  "name": "context-meter",
+  "version": "0.1.0",
+  "description": "Keeps context use, session cost, compactions, rate limit and model in the status line, with warnings before the window fills.",
+  "author": { "name": "Rich Tillman" },
+  "userConfig": {
+    "warnPercent": {
+      "type": "number",
+      "title": "Warn at (% of context)",
+      "description": "Context use that adds a warning mark.",
+      "default": 60
+    },
+    "forkPercent": {
+      "type": "number",
+      "title": "Fork at (% of context)",
+      "description": "Context use that suggests forking to a fresh session.",
+      "default": 80
+    }
+  }
+}

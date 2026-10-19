@@ -1,0 +1,44 @@
+{
+  "name": "guardrails",
+  "version": "0.1.0",
+  "description": "Blocks edits outside the task spec, made-up packages, check-weakening edits and destructive git; gates finishing, committing and /ship on passing checks.",
+  "author": { "name": "Rich Tillman" },
+  "userConfig": {
+    "stopGate": {
+      "type": "boolean",
+      "title": "Gate end of turn on checks",
+      "description": "After Claude edits code, checks must pass before it can finish (2 retries, then it stops and reports).",
+      "default": true
+    },
+    "promptRule": {
+      "type": "boolean",
+      "title": "Add the guardrails rule to the system prompt",
+      "description": "About 60 tokens per turn: terse, Suggestions section, verify before claiming.",
+      "default": true
+    },
+    "draftSpecs": {
+      "type": "boolean",
+      "title": "Save long prompts as a spec draft",
+      "description": "A prompt over 1500 characters with no .claude/spec.md yet is saved there as a draft.",
+      "default": true
+    },
+    "newTaskPercent": {
+      "type": "number",
+      "title": "Hold new tasks above (% context)",
+      "description": "A long new prompt above this context use is held once; sending it again goes ahead.",
+      "default": 75
+    },
+    "allowImports": {
+      "type": "string",
+      "title": "Extra allowed imports",
+      "description": "Comma-separated package names the import check accepts without finding them installed.",
+      "default": ""
+    },
+    "checkTimeoutMinutes": {
+      "type": "number",
+      "title": "Check timeout (minutes)",
+      "description": "How long each check command may run.",
+      "default": 10
+    }
+  }
+}
