@@ -89,6 +89,26 @@ describe('rules', () => {
     }
   })
 
+  test('flags removed assertions, own-module mocks and lowered coverage', () => {
+    expect(judgeWeakening("it('a', () => {})", "it('a', () => { expect(x).toBe(1) })", 'src/a.test.ts')).toBe('removes assertions from a test (1 → 0)')
+    expect(judgeWeakening('expect(x).toBe(2)', 'expect(x).toBe(1)', 'src/a.test.ts')).toBeUndefined()
+    expect(judgeWeakening("it('a', () => {})", "it('a', () => { expect(x).toBe(1) })", 'src/a.ts')).toBeUndefined()
+    expect(judgeWeakening("vi.mock('./db')", '', 'src/a.test.ts')).toContain('mocks one of your own modules')
+    expect(judgeWeakening("vi.mock('node:fs')", '', 'src/a.test.ts')).toBeUndefined()
+    expect(judgeWeakening('thresholds: { lines: 60 }', 'thresholds: { lines: 80 }', 'vitest.config.ts')).toBe('lowers the lines coverage threshold from 80 to 60')
+    expect(judgeWeakening('"branches": 70', '"branches": 90', 'package.json')).toBe('lowers the branches coverage threshold from 90 to 70')
+    expect(judgeWeakening('thresholds: { lines: 90 }', 'thresholds: { lines: 80 }', 'vitest.config.ts')).toBeUndefined()
+  })
+
+  test('blocks snapshot rewrites but not ordinary test runs', () => {
+    for (const command of ['vitest -u', 'npx jest --updateSnapshot', 'pnpm test -- -u', 'npm run test -- --update', 'npx playwright test --update-snapshots']) {
+      expect(judgeCommand(command)).toContain('rewrites snapshots')
+    }
+    for (const command of ['pnpm vitest run', 'git push -u origin test', 'npm test', 'jest --coverage']) {
+      expect(judgeCommand(command)).toBeUndefined()
+    }
+  })
+
   test('flags stock AI phrasing in commit, tag, PR and issue text only', () => {
     expect(judgeProse('git commit -m "Add login \u2014 with retries"')).toBe('the message uses an em dash')
     expect(judgeProse("gh pr create --title x --body 'A robust, seamless flow'")).toBe('the message uses "seamless", "robust"')

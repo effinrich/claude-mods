@@ -107,3 +107,10 @@ test('asks for plain wording in commit messages unless the writing gate is off',
     const off = await decide('codex', { promptContext: true }, { ...DEFAULT_CONFIG, writingGate: false }, { ...base(), kind: 'shell', command }, new Date());
     assert.equal(off.kind, 'allow');
 });
+test('blocks a lowered coverage threshold and a removed assertion from any tool', async () => {
+    write('vitest.config.ts', 'export default { test: { coverage: { thresholds: { lines: 80 } } } }');
+    const lowered = await run({ ...base(), kind: 'edit', edits: [{ path: join(root, 'vitest.config.ts'), newText: 'thresholds: { lines: 50 }', oldText: 'thresholds: { lines: 80 }' }] });
+    assert.match(lowered.kind === 'deny' ? lowered.reason : '', /lowers the lines coverage threshold from 80 to 50/);
+    const removed = await run({ ...base(), kind: 'edit', edits: [{ path: join(root, 'src/a.test.ts'), newText: '', oldText: 'expect(a).toBe(1)' }] });
+    assert.match(removed.kind === 'deny' ? removed.reason : '', /removes assertions/);
+});

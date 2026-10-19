@@ -1,7 +1,7 @@
 import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 import { resolveChecks, summarizeFailures, type CheckRun } from './checks.ts'
-import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases } from './imports.ts'
-import { isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from './rules.ts'
+import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases, unresearchedPackages } from './imports.ts'
+import { isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from './rules.ts'
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH, type Spec } from './spec.ts'
 
 type Config = {
@@ -9,6 +9,7 @@ type Config = {
   promptRule: boolean
   draftSpecs: boolean
   writingGate: boolean
+  researchHoldLines: number
   newTaskPercent: number
   allowImports: ReadonlySet<string>
   checkTimeoutMs: number
@@ -20,6 +21,9 @@ type GuardState = {
   lastResult: 'pass' | 'fail' | undefined
   stopBlocks: number
   heldPrompt: { text: string; at: number } | undefined
+  // Inputs of the session's non-edit tool calls (reads, searches, fetches), for the research-first hold.
+  lookups: string[]
+  heldWrites: Set<string>
 }
 
 const MAX_STOP_BLOCKS = 2
@@ -34,6 +38,7 @@ const RULE =
   `Guardrails are on. Follow ${SPEC_PATH} exactly when it exists; edits outside its scope are blocked. ` +
   'Put out-of-scope ideas under "Suggestions:" (at most 3 bullets) instead of doing them. Be terse. ' +
   'Never invent APIs, packages, flags or file contents: read, grep or say you do not know. ' +
+  "Unless the user asks for a custom build, prefer an established, widely used library or the existing API of one already in use; before building on a library, search its docs, examples and source; check a package exists and is maintained before adding it. " +
   'Checks must pass before you finish.'
 
 const SHIP_PROMPT =
@@ -43,15 +48,29 @@ const SHIP_PROMPT =
 
 const REWORD = 'Reword it plainly (period, comma or parentheses instead of em dashes; plain words) and run it again.'
 
+const MAX_LOOKUPS = 400
+const LOOKUP_CHARS = 2_000
+const EDIT_TOOLS: ReadonlySet<string> = new Set(['Edit', 'Write', 'NotebookEdit'])
+
 const SUGGEST = 'If it needs changing, list it under "Suggestions:" in your reply.'
 
-const state: GuardState = { isOff: false, isDirty: false, lastResult: undefined, stopBlocks: 0, heldPrompt: undefined }
+const state: GuardState = {
+  isOff: false,
+  isDirty: false,
+  lastResult: undefined,
+  stopBlocks: 0,
+  heldPrompt: undefined,
+  lookups: [],
+  heldWrites: new Set(),
+}
 
 const readConfig = (options: PluginOptions): Config => ({
   stopGate: options.stopGate !== false,
   promptRule: options.promptRule !== false,
   draftSpecs: options.draftSpecs !== false,
   writingGate: options.writingGate !== false,
+  researchHoldLines:
+    typeof options.researchHoldLines === 'number' && options.researchHoldLines >= 0 ? options.researchHoldLines : 150,
   newTaskPercent:
     typeof options.newTaskPercent === 'number' && options.newTaskPercent > 0 ? options.newTaskPercent : 75,
   allowImports: new Set(
@@ -147,17 +166,39 @@ const judgeEdit = async (
   }
   const verdict = judgeScope(relative, await loadSpec($, root))
   if (!verdict.isAllowed) return `guardrails: ${verdict.reason}. Don't edit it. ${SUGGEST}`
-  if (!isSourceFile(relative)) return undefined
+  if (!isSourceFile(relative) && !isCoverageConfig(relative)) return undefined
 
   const weakening = judgeWeakening(newCode, oldCode, relative)
   if (weakening !== undefined) {
     return `guardrails: this edit ${weakening}. Fix the cause instead. If it is truly needed, explain why under "Suggestions:" and let the user decide.`
   }
+  if (!isSourceFile(relative)) return undefined
   const missing = await missingPackage($, config, absoluteIn(root, path), addedPackages(newCode, oldCode))
   if (missing !== undefined) {
     return `guardrails: '${missing}' is not installed or declared in any package.json above ${relative}. Don't guess packages: use an installed one, or propose adding it under "Suggestions:".`
   }
   return undefined
+}
+
+const rememberLookup = (input: unknown): void => {
+  state.lookups = [...state.lookups, JSON.stringify(input).slice(0, LOOKUP_CHARS)].slice(-MAX_LOOKUPS)
+}
+
+// A large new file built on a library the session never looked at is often a hand-rolled copy of an API the library
+// already has. Held once; writing it again goes through.
+const holdForResearch = (config: Config, path: string, content: string): string | undefined => {
+  if (config.researchHoldLines === 0 || !isSourceFile(path) || state.heldWrites.has(path)) return undefined
+  const lines = content.split('\n').length
+  if (lines < config.researchHoldLines) return undefined
+  const names = unresearchedPackages(content, state.lookups, config.allowImports)
+  if (names.length === 0) return undefined
+  state.heldWrites.add(path)
+  const list = names.map(name => `'${name}'`).join(', ')
+  return (
+    `guardrails: this new ${lines}-line file builds on ${list}, which this session has not looked up yet. ` +
+    `Check for an existing API first: the docs, the examples in its repo, and its source under node_modules/${names[0]}. ` +
+    'Prefer what the library already provides over custom code. If nothing fits, write the file again and it will go through.'
+  )
 }
 
 const runChecks = async ($: EngineInterface, config: Config): Promise<string | undefined> => {
@@ -248,6 +289,11 @@ export const register: Register = (on, options) => {
     return { ...result, sections: [...result.sections, { id: 'guardrails:rule', text: RULE, scope: 'session' as const }] }
   })
 
+  on('tool.call', async ($, e, next) => {
+    if (!EDIT_TOOLS.has(e.tool)) rememberLookup(e)
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
     if (state.isOff) return next(e)
     const deny = await judgeEdit($, config, e.file_path, e.new_string, e.old_string)
@@ -259,8 +305,11 @@ export const register: Register = (on, options) => {
 
   on('tool.call', { tool: 'Write' }, async ($, e, next) => {
     if (state.isOff) return next(e)
-    const existing = await $.fs.read(e.file_path).catch(() => '')
-    const deny = await judgeEdit($, config, e.file_path, e.content, typeof existing === 'string' ? existing : '')
+    const isNew = !(await $.fs.exists(e.file_path))
+    const existing = isNew ? '' : await $.fs.read(e.file_path).catch(() => '')
+    const deny =
+      (await judgeEdit($, config, e.file_path, e.content, typeof existing === 'string' ? existing : '')) ??
+      (isNew ? holdForResearch(config, e.file_path, e.content) : undefined)
     if (deny !== undefined) return { deny }
     const result = await next(e)
     if (result.deny === undefined && result.isError !== true) state.isDirty = true

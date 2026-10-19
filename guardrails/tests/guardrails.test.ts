@@ -198,3 +198,32 @@ test('saves a long pasted prompt as a spec draft when none exists', async ($, on
   expect(files.get(`${ROOT}/.claude/spec.md`)).toContain('24/7 AI trading desk')
   expect(toasts.at(-1)).toContain('Saved your long prompt as .claude/spec.md')
 })
+
+const CAMERA = (lines: number) =>
+  `import { Editor } from 'tldraw'\nimport { useState } from 'react'\n${'export const step = 1\n'.repeat(lines)}`
+
+test('holds a large new file built on a library the session never looked up, once', async ($, on) => {
+  world(on, { ...BASE, [`${ROOT}/package.json`]: JSON.stringify({ name: 'app', dependencies: { react: '19.0.0', tldraw: '4.0.0' } }) })
+  const write = (path: string, content: string) => $.tool.call({ tool: 'Write', file_path: path, content })
+
+  const held = await write(`${ROOT}/src/camera.tsx`, CAMERA(200))
+  expect(held.deny).toContain("builds on 'tldraw'")
+  expect(held.deny).not.toContain("'react'")
+  expect((await write(`${ROOT}/src/camera.tsx`, CAMERA(200))).deny).toBeUndefined()
+  expect((await write(`${ROOT}/src/small.tsx`, CAMERA(20))).deny).toBeUndefined()
+})
+
+test('lets the new file through once the library was searched or read', async ($, on) => {
+  world(on, { ...BASE, [`${ROOT}/package.json`]: JSON.stringify({ name: 'app', dependencies: { react: '19.0.0', tldraw: '4.0.0' } }) })
+  await $.tool.call({ tool: 'Grep', pattern: 'setCamera', path: `${ROOT}/node_modules/tldraw/dist` })
+
+  const written = await $.tool.call({ tool: 'Write', file_path: `${ROOT}/src/camera.tsx`, content: CAMERA(200) })
+  expect(written.deny).toBeUndefined()
+})
+
+test('blocks snapshot rewrites and removed assertions', async ($, on) => {
+  world(on, BASE)
+  expect((await $.tool.call({ tool: 'Bash', command: 'pnpm vitest run -u' })).deny).toContain('rewrites snapshots')
+  const removed = await edit($, `${ROOT}/src/a.test.ts`, "it('x', () => {})", "it('x', () => { expect(a).toBe(1) })")
+  expect(removed.deny).toContain('removes assertions from a test (1 → 0)')
+})

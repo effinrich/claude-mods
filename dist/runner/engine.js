@@ -7,7 +7,7 @@ import { resolveChecks, summarizeFailures } from "../core/checks.js";
 import { diffSnapshots, snapshotFile } from "../core/drift.js";
 import { renderHandoff } from "../core/handoff.js";
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases } from "../core/imports.js";
-import { isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from "../core/rules.js";
+import { isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from "../core/rules.js";
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH } from "../core/spec.js";
 import { handoffPath, loadState, log, modsHome, rememberPrompt, rememberTouched, saveState, writeJson, } from "./state.js";
 import { ALLOW } from "./types.js";
@@ -75,7 +75,7 @@ export const judgeEdits = (config, root, event) => {
         const verdict = judgeScope(rel, spec);
         if (!verdict.isAllowed)
             return { kind: 'deny', reason: `guardrails: ${verdict.reason}. Don't edit it. ${SUGGEST}` };
-        if (!isSourceFile(rel))
+        if (!isSourceFile(rel) && !isCoverageConfig(rel))
             continue;
         const absolute = isAbsolute(edit.path) ? edit.path : join(root, edit.path);
         const oldText = edit.oldText ?? readText(absolute) ?? '';
@@ -86,6 +86,8 @@ export const judgeEdits = (config, root, event) => {
                 reason: `guardrails: this edit ${weakening}. Fix the cause instead. If it is truly needed, explain why under "Suggestions:" and let the user decide.`,
             };
         }
+        if (!isSourceFile(rel))
+            continue;
         const missing = missingPackage(config, absolute, addedPackages(edit.newText, oldText));
         if (missing !== undefined) {
             return {

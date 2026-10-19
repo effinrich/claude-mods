@@ -12,6 +12,14 @@ const COMMAND_RULES: readonly Rule[] = [
   { pattern: /\bgit\s+(checkout|restore)\s+(--\s+)?\.(\s|$)/, reason: 'discards every uncommitted change' },
   { pattern: /\bgit\s+clean\s+-[a-zA-Z]*f/, reason: 'deletes untracked files for good' },
   { pattern: /\brm\s+-[a-zA-Z]*r[a-zA-Z]*\s+(\/|~|\$HOME)(\/?\s|\/?$)/, reason: 'deletes a home or root directory' },
+  {
+    pattern: /\b(vitest|jest|playwright)\b[^|;&]*\s(-u|--update|--updateSnapshot|--update-snapshots)\b/,
+    reason: 'rewrites snapshots to match the current output; fix the code, or ask the user to approve new snapshots',
+  },
+  {
+    pattern: /\b(npm|pnpm|yarn|bun)\s+(run\s+)?test\b[^|;&]*\s(-u|--update|--updateSnapshot|--update-snapshots)\b/,
+    reason: 'rewrites snapshots to match the current output; fix the code, or ask the user to approve new snapshots',
+  },
 ]
 
 export const judgeCommand = (command: string): string | undefined =>
@@ -25,7 +33,41 @@ const WEAKENING: readonly Rule[] = [
   { pattern: /@ts-(ignore|nocheck|expect-error)\b/, reason: 'silences the type checker' },
   { pattern: /eslint-disable/, reason: 'silences the linter' },
   { pattern: /\bas\s+any\b|:\s*any\b(?!\w)|<any>/, reason: 'adds an `any` type', isTypeScriptOnly: true },
+  {
+    pattern: /\b(vi|jest)\.(mock|doMock)\(\s*['"`]\.\.?\//,
+    reason: 'mocks one of your own modules; mock only system boundaries (network, time, filesystem) and test the real code',
+  },
 ]
+
+const TEST_FILE = /(\.(test|spec)\.[cm]?[jt]sx?$)|((^|\/)(__tests__|tests?)\/.+\.[cm]?[jt]sx?$)/
+const ASSERTION = /\bexpect\s*\(|\bassert(\.\w+)?\s*\(|\.should\b/g
+
+const countAssertions = (code: string): number => code.match(ASSERTION)?.length ?? 0
+
+const COVERAGE_CONFIG = /(^|\/)((vitest|vite|jest)\.config\.[cm]?[jt]s|jest\.config\.json|package\.json|\.nycrc(\.json)?)$/
+const THRESHOLD = /\b(lines|branches|functions|statements)['"]?\s*:\s*(\d+(\.\d+)?)/g
+
+const thresholds = (code: string): Map<string, number> => {
+  const found = new Map<string, number>()
+  for (const match of code.matchAll(THRESHOLD)) {
+    const key = match[1] ?? ''
+    const value = Number(match[2])
+    found.set(key, Math.min(found.get(key) ?? value, value))
+  }
+  return found
+}
+
+// Test-runner config is not source, but lowering its coverage thresholds weakens the checks all the same.
+export const isCoverageConfig = (path: string): boolean => COVERAGE_CONFIG.test(path)
+
+const loweredThreshold = (newCode: string, oldCode: string): string | undefined => {
+  const after = thresholds(newCode)
+  for (const [key, before] of thresholds(oldCode)) {
+    const now = after.get(key)
+    if (now !== undefined && now < before) return `lowers the ${key} coverage threshold from ${before} to ${now}`
+  }
+  return undefined
+}
 
 const LOCKFILES = /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|Cargo\.lock|poetry\.lock|uv\.lock)$/
 
@@ -33,6 +75,13 @@ export const isLockfile = (path: string): boolean => LOCKFILES.test(path)
 
 // Only what the edit adds counts, so touching a file that already has a suppression is fine.
 export const judgeWeakening = (newCode: string, oldCode: string, path: string): string | undefined => {
+  if (COVERAGE_CONFIG.test(path)) {
+    const lowered = loweredThreshold(newCode, oldCode)
+    if (lowered !== undefined) return lowered
+  }
+  if (TEST_FILE.test(path) && countAssertions(newCode) < countAssertions(oldCode)) {
+    return `removes assertions from a test (${countAssertions(oldCode)} → ${countAssertions(newCode)})`
+  }
   const isTypeScript = /\.(c|m)?tsx?$/.test(path)
   for (const rule of WEAKENING) {
     if (rule.isTypeScriptOnly === true && !isTypeScript) continue

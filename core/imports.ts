@@ -87,3 +87,24 @@ export const parentDirs = (filePath: string): string[] => {
   if (filePath.startsWith('/') && !dirs.includes('/')) dirs.push('/')
   return dirs
 }
+
+// Frameworks almost every file imports; holding each new component for `react` would only be noise.
+const UBIQUITOUS: ReadonlySet<string> = new Set(['react', 'react-dom', 'preact', 'vue', 'svelte', 'solid-js', 'next', '@angular/core'])
+
+// A scoped package also counts by its scope (`@tldraw/editor` → "tldraw"), which is how people search for it.
+const searchTerms = (name: string): string[] => {
+  const scope = name.startsWith('@') ? name.split('/')[0]?.slice(1) : undefined
+  return [name, ...(scope !== undefined && scope.length >= 3 ? [scope] : [])]
+}
+
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+export const isResearched = (name: string, seen: readonly string[]): boolean =>
+  searchTerms(name).some(term => {
+    const pattern = new RegExp(`(^|[^\\w-])${escapeRegExp(term)}($|[^\\w-])`, 'i')
+    return seen.some(text => pattern.test(text))
+  })
+
+// Packages a new file builds on that the session has not looked up yet (docs, source, examples, a search).
+export const unresearchedPackages = (code: string, seen: readonly string[], allowed: ReadonlySet<string>): string[] =>
+  importedPackages(code).filter(name => !UBIQUITOUS.has(name) && !allowed.has(name) && !isResearched(name, seen))

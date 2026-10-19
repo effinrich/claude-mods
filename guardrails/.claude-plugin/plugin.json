@@ -1,6 +1,6 @@
 {
   "name": "guardrails",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Blocks edits outside the task spec, made-up packages, check-weakening edits and destructive git; gates finishing, committing and /ship on passing checks.",
   "author": {
     "name": "Rich Tillman"
@@ -15,7 +15,7 @@
     "promptRule": {
       "type": "boolean",
       "title": "Add the guardrails rule to the system prompt",
-      "description": "About 60 tokens per turn: terse, Suggestions section, verify before claiming.",
+      "description": "About 110 tokens per turn: terse, Suggestions section, verify before claiming, prefer existing libraries.",
       "default": true
     },
     "draftSpecs": {
@@ -29,6 +29,12 @@
       "title": "Check commit and PR text for AI phrasing",
       "description": "Blocks git commit, git tag and gh pr/issue text that uses em dashes or stock phrases (delve, seamless, leverage, robust...) until it is reworded.",
       "default": true
+    },
+    "researchHoldLines": {
+      "type": "number",
+      "title": "Hold large new files until the library is looked up (lines)",
+      "description": "A new source file at least this long that imports a library the session has not searched, read or fetched docs for is held once. 0 turns it off.",
+      "default": 150
     },
     "newTaskPercent": {
       "type": "number",

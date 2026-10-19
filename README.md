@@ -41,7 +41,7 @@ Needs Node 20 or newer. MIT licensed.
 
 The end-of-turn gate and the commit gate skip the check run when none of the files edited this session changed since the checks last passed.
 
-Not ported: context-meter (these tools have no custom status line command) and cli-passthrough (it is specific to Claude Code's own CLI). The context-percentage hold is also missing, because none of these tools tell hooks how full the context is.
+Not ported: context-meter (these tools have no custom status line command) and cli-passthrough (it is specific to Claude Code's own CLI). The context-percentage hold is also missing, because none of these tools tell hooks how full the context is, and so is the research-first hold, because their hooks don't see reads and searches. They get the matching instruction line instead.
 
 ### First run in each tool
 
@@ -99,7 +99,7 @@ Then run `doctor` to check, and the `git reset --hard` test above.
 
 ## Claude Code mods
 
-These run inside Claude Code's plugin engine. Guardrails adds one short system prompt line, which you can turn off.
+These run inside Claude Code's plugin engine. Guardrails adds one short system prompt line (scope, Suggestions, no invented APIs, prefer established libraries and their existing APIs), which you can turn off.
 
 ### guardrails
 
@@ -122,14 +122,18 @@ A prompt over 1500 characters with no spec yet is saved there as a draft for you
 
 - Edits outside `scope` or inside `forbid`. The deny tells Claude to list the change under "Suggestions:" instead, so ideas still reach you.
 - Imports of packages that are neither installed nor declared in any `package.json` above the file (type-only imports, relatives, tsconfig path aliases and Node builtins are fine).
-- Edits that weaken checks: `.skip` / `.only`, `@ts-ignore`, `eslint-disable`, new `any` types. Only what the edit adds counts.
+- Edits that weaken checks: `.skip` / `.only`, `@ts-ignore`, `eslint-disable`, new `any` types, `vi.mock`/`jest.mock` of your own modules (relative paths). Only what the edit adds counts.
+- Edits that remove assertions from a test file (`expect(`, `assert(`, `.should`) or lower a coverage threshold in the test config.
+- Snapshot rewrites: `vitest -u`, `jest --updateSnapshot`, `pnpm test -- -u`, `playwright --update-snapshots`.
 - Hand edits to lockfiles.
 - `git commit`, `git tag` and `gh pr`/`gh issue` text with an em dash or a stock phrase (delve, seamless, leverage, robust, comprehensive, "it's worth noting", "I hope this helps"). Claude rewords it and runs the command again. The list is short so it rarely fires on real text.
 - `--no-verify`, `git commit -n`, `git push --force` (lease is fine), `git reset --hard`, `git checkout -- .`, `git clean -f`, `rm -rf ~` or `/`. You can still run these yourself with `!`.
 - Finishing a turn that edited code while checks fail. Claude is sent back up to 2 times, then stops and reports.
 - `git commit` while checks fail.
 
-**What it holds back on you**
+**What it holds back once**
+
+- A new source file of 150+ lines that imports a library the session hasn't searched, read under `node_modules/`, or fetched docs for. Claude is told to check the library's docs, repo examples and source for an existing API first; writing the file again goes through. React, Vue, Svelte, Next and similar frameworks don't count.
 
 - A long new prompt when context is over 75%: held once with a nudge to `/clear` (and `/handoff-load`); send it again to go ahead.
 
@@ -139,7 +143,7 @@ A prompt over 1500 characters with no spec yet is saved there as a draft for you
 - `/checks` runs the checks now.
 - `/guard` shows status; `/guard off` and `/guard on` switch it for the session.
 
-Settings in `/config`: end-of-turn gate, system prompt line, spec drafts, writing check, context hold threshold, extra allowed imports, check timeout.
+Settings in `/config`: end-of-turn gate, system prompt line, spec drafts, writing check, research hold size (0 turns it off), context hold threshold, extra allowed imports, check timeout.
 
 ### default-skills
 
@@ -196,7 +200,7 @@ These were reviewed for this repo on 2026-10-19. None are bundled.
 - **Claude Code `/goal`**: use on demand with a check as the goal ("`pnpm test` passes and …"). Guardrails still blocks bad edits and commits inside the loop. Avoid third-party goal loops with high continuation caps.
 - **humanizer** (blader/humanizer): good for a one-off rewrite of a long document. At about 7,000 tokens it is too big to pin; `plain-writing` covers the same ground in about 400.
 - **superdesign**: skipped. It sends your code to a hosted service and needs an account.
-- **ultrawork** (oh-my-opencode): skipped. It is an OpenCode keyword hook, not a portable skill, uses a source-available license, and published reviews report about 3x the tokens and runaway subagent loops.
+- **ultrawork** (oh-my-claudecode, MIT): skipped. The main repo retired it in v5.0.0 in favour of `/oh-my-claudecode:execute`. Its persistent mode used a Stop hook that kept blocking (capped at 50 to 500 passes) even with no todos left. Next to the guardrails gate that would override the 2-retry limit and bury the "checks fail" message under "do not stop". The OpenCode version (oh-my-opencode) has a source-available license and reported runaway loops. Ideas worth borrowing by hand: plan parallel work in waves with a dependency list, route simple lookups to a cheaper model, and keep subagent reports short.
 
 ## Notes
 

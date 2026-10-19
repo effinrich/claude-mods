@@ -7,7 +7,7 @@ import { resolveChecks, summarizeFailures, type CheckRun } from '../core/checks.
 import { diffSnapshots, snapshotFile, type FileSnapshot, type Snapshot } from '../core/drift.ts'
 import { renderHandoff } from '../core/handoff.ts'
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases } from '../core/imports.ts'
-import { isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from '../core/rules.ts'
+import { isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from '../core/rules.ts'
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH, type Spec } from '../core/spec.ts'
 import {
   handoffPath,
@@ -86,7 +86,7 @@ export const judgeEdits = (config: Config, root: string, event: Extract<HookEven
     }
     const verdict = judgeScope(rel, spec)
     if (!verdict.isAllowed) return { kind: 'deny', reason: `guardrails: ${verdict.reason}. Don't edit it. ${SUGGEST}` }
-    if (!isSourceFile(rel)) continue
+    if (!isSourceFile(rel) && !isCoverageConfig(rel)) continue
     const absolute = isAbsolute(edit.path) ? edit.path : join(root, edit.path)
     const oldText = edit.oldText ?? readText(absolute) ?? ''
     const weakening = judgeWeakening(edit.newText, oldText, rel)
@@ -96,6 +96,7 @@ export const judgeEdits = (config: Config, root: string, event: Extract<HookEven
         reason: `guardrails: this edit ${weakening}. Fix the cause instead. If it is truly needed, explain why under "Suggestions:" and let the user decide.`,
       }
     }
+    if (!isSourceFile(rel)) continue
     const missing = missingPackage(config, absolute, addedPackages(edit.newText, oldText))
     if (missing !== undefined) {
       return {

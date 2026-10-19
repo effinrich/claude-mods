@@ -147,6 +147,7 @@ const GUARDRAIL_LINES = [
   '- Follow `.claude/spec.md` exactly when it exists; hooks block edits outside its scope.',
   '- Put out-of-scope ideas under "Suggestions:" (at most 3 bullets) instead of doing them. Be terse.',
   '- Never invent APIs, packages, flags or file contents: read, search, or say you do not know.',
+  '- Unless the user asks for a custom build, prefer an established, widely used library or the existing API of one already in use over custom code. Before building on a library, search its docs, examples and source; check that a package exists and is maintained before adding it.',
 ]
 
 // `isOptional`: for files shared in a repo, where a teammate may not have the skill installed.
