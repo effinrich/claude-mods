@@ -45,6 +45,8 @@ export type Config = {
   draftSpecs: boolean
   allowImports: readonly string[]
   checkTimeoutMs: number
+  // Append each raw hook payload to ~/.claude-mods/payloads.log (also on with CLAUDE_MODS_DEBUG=1).
+  debug: boolean
 }
 
 export const DEFAULT_CONFIG: Config = {
@@ -53,6 +55,7 @@ export const DEFAULT_CONFIG: Config = {
   draftSpecs: true,
   allowImports: [],
   checkTimeoutMs: 10 * 60_000,
+  debug: false,
 }
 
 export const ALLOW: Verdict = { kind: 'allow' }

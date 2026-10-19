@@ -3,21 +3,19 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { homedir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { modsHome } from '../runner/state.ts'
+import { isDebugOn, payloadLogPath } from '../runner/debug.ts'
+import { loadConfig, modsHome } from '../runner/state.ts'
 import { DEFAULT_CONFIG, TOOLS, type Config, type ToolName } from '../runner/types.ts'
+import { ALL_MODS, backupStamp, CLAUDE_EXTRAS, DEFAULT_SKILLS, describePlan, flag, MARKETPLACE, parseList, type ModName } from './cli.ts'
 import { Plan, readJsonObject } from './files.ts'
-import { planCommands, planDefaultSkills, planInstructions } from './skills.ts'
-import { configDir, countOurHooks, hookConfigPath, planHooks } from './tools.ts'
+import { runProject } from './project.ts'
+import { instructionLines, planCommands, planDefaultSkills, planInstructions } from './skills.ts'
+import { configDir, countOurHooks, hookConfigPath, hookNodePaths, planHooks } from './tools.ts'
 
 type Target = ToolName | 'claude'
-type ModName = 'guardrails' | 'compaction-guard' | 'context-audit' | 'default-skills'
 
 type Choices = { tools: Target[]; mods: ModName[]; skills: string }
 
-const ALL_MODS: readonly ModName[] = ['guardrails', 'compaction-guard', 'context-audit', 'default-skills']
-const CLAUDE_EXTRAS = ['context-meter', 'cli-passthrough'] as const
-const DEFAULT_SKILLS = 'ponytail:ponytail full, feature-based-architecture'
-const MARKETPLACE = 'effinrich/claude-mods'
 const BINARIES: Readonly<Record<Target, readonly string[]>> = {
   claude: ['claude'],
   codex: ['codex'],
@@ -42,47 +40,24 @@ export const detectTools = (home: string): Target[] =>
     tool => BINARIES[tool].some(onPath) || (tool !== 'claude' && existsSync(configDir(home, tool))),
   )
 
-const flag = (args: readonly string[], name: string): string | undefined => {
-  const index = args.indexOf(`--${name}`)
-  if (index !== -1) return args[index + 1]
-  return args.find(arg => arg.startsWith(`--${name}=`))?.slice(name.length + 3)
-}
-
-const parseList = <T extends string>(value: string | undefined, allowed: readonly T[]): T[] | undefined => {
-  if (value === undefined) return undefined
-  if (value === 'all') return [...allowed]
-  const items = value.split(',').map(item => item.trim()).filter(item => item !== '')
-  const unknown = items.filter(item => !allowed.includes(item as T))
-  if (unknown.length > 0) throw new Error(`unknown: ${unknown.join(', ')} (choose from ${allowed.join(', ')})`)
-  return items as T[]
-}
-
 const loadChoices = (): Choices | undefined => {
   const stored = readJsonObject(choicesPath())
   return stored === 'invalid' || !Array.isArray(stored.tools) ? undefined : (stored as unknown as Choices)
 }
 
+// `debug` is the one setting a user edits by hand, so a reinstall keeps it.
 const runtimeConfig = (mods: readonly ModName[]): Config => ({
   ...DEFAULT_CONFIG,
+  debug: (() => {
+    const current = readJsonObject(join(modsHome(), 'config.json'))
+    return current !== 'invalid' && current.debug === true
+  })(),
   mods: {
     guardrails: mods.includes('guardrails'),
     compactionGuard: mods.includes('compaction-guard'),
     contextAudit: mods.includes('context-audit'),
   },
 })
-
-const instructionLines = (mods: readonly ModName[], skills: readonly { skill: string; args: string }[], home: string): string[] => [
-  ...(mods.includes('guardrails')
-    ? [
-        '- Follow `.claude/spec.md` exactly when it exists; hooks block edits outside its scope.',
-        '- Put out-of-scope ideas under "Suggestions:" (at most 3 bullets) instead of doing them. Be terse.',
-        '- Never invent APIs, packages, flags or file contents: read, search, or say you do not know.',
-      ]
-    : []),
-  ...skills.map(
-    ref => `- Always on: the \`${ref.skill}\` skill${ref.args ? ` with arguments \`${ref.args}\`` : ''}. At the start of each session, read ${join(home, '.agents', 'skills', ref.skill, 'SKILL.md')} and follow it.`,
-  ),
-]
 
 const runClaude = (args: readonly string[], isDryRun: boolean, log: (line: string) => void): void => {
   log(`  $ claude ${args.join(' ')}`)
@@ -98,13 +73,8 @@ const planFor = (home: string, choices: Choices, isRemoving: boolean): Plan => {
   for (const tool of tools) planHooks(plan, home, tool, main)
   planCommands(plan, home, tools, choices.mods.includes('guardrails') ? main : undefined)
   const skills = choices.mods.includes('default-skills') ? planDefaultSkills(plan, home, tools, choices.skills, isRemoving) : []
-  planInstructions(plan, home, tools, isRemoving ? undefined : instructionLines(choices.mods, skills, home))
+  planInstructions(plan, home, tools, isRemoving ? undefined : instructionLines(choices.mods.includes('guardrails'), skills, skill => join(home, '.agents', 'skills', skill, 'SKILL.md')))
   return plan
-}
-
-const describePlan = (plan: Plan, log: (line: string) => void): void => {
-  for (const change of plan.changes) log(`  ${change.action === 'remove' ? 'remove' : 'write '} ${change.path}`)
-  for (const note of plan.notes) log(`  note: ${note}`)
 }
 
 const install = (args: readonly string[], home: string, log: (line: string) => void, isUpdate: boolean): number => {
@@ -134,7 +104,7 @@ const install = (args: readonly string[], home: string, log: (line: string) => v
 
   const plan = planFor(home, choices, false)
   describePlan(plan, log)
-  if (!isDryRun) plan.apply(new Date().toISOString().replace(/[:.]/g, '-'))
+  if (!isDryRun) plan.apply(backupStamp())
 
   if (choices.tools.includes('claude')) {
     log('Claude Code (marketplace plugins):')
@@ -160,7 +130,7 @@ const uninstall = (args: readonly string[], home: string, log: (line: string) =>
   const plan = planFor(home, choices, true)
   describePlan(plan, log)
   if (!isDryRun) {
-    plan.apply(new Date().toISOString().replace(/[:.]/g, '-'))
+    plan.apply(backupStamp())
     rmSync(join(modsHome(), 'runtime'), { recursive: true, force: true })
     rmSync(choicesPath(), { force: true })
     rmSync(join(modsHome(), 'config.json'), { force: true })
@@ -172,6 +142,9 @@ const uninstall = (args: readonly string[], home: string, log: (line: string) =>
   log(`Kept: handoffs and session state in ${modsHome()} (delete the folder to remove them). Backups of edited files end in .claude-mods-backup-<time>.`)
   return 0
 }
+
+const missingNodePaths = (home: string): string[] =>
+  [...new Set(TOOLS.flatMap(tool => hookNodePaths(home, tool)))].filter(node => !existsSync(node))
 
 const doctor = (home: string, log: (line: string) => void): number => {
   const choices = loadChoices()
@@ -185,6 +158,16 @@ const doctor = (home: string, log: (line: string) => void): number => {
     const status = count > 0 ? `${count} hook${count === 1 ? '' : 's'} in ${hookConfigPath(home, tool)}` : expected ? 'MISSING: run update' : 'not installed'
     log(`  ${tool.padEnd(8)} ${status}`)
   }
+  for (const node of missingNodePaths(home)) {
+    log(`  WARNING: the hooks run Node from ${node}, which no longer exists (a Node upgrade via nvm or similar?).`)
+    log('           Run `npx github:effinrich/claude-mods update` to point them at your current Node.')
+  }
+  const config = loadConfig()
+  log(
+    isDebugOn(config)
+      ? `  payload capture: on, writing to ${payloadLogPath()}`
+      : `  payload capture: off. Turn it on with CLAUDE_MODS_DEBUG=1 or "debug": true in ${join(modsHome(), 'config.json')}; payloads go to ${payloadLogPath()}`,
+  )
   const logPath = join(modsHome(), 'hook.log')
   if (existsSync(logPath)) {
     const lines = readFileSync(logPath, 'utf8').trimEnd().split('\n').slice(-5)
@@ -201,14 +184,24 @@ commands:
   update      reinstall with your last choices (after pulling a new version)
   uninstall   remove hooks, skills and instruction blocks this installed
   doctor      show what is installed where
+  project     add shared claude-mods files to the current repo (--remove takes them out)
 
 options:
   --tools claude,codex,gemini,cursor,copilot | all   (default: detected)
   --mods guardrails,compaction-guard,context-audit,default-skills | all   (default: all)
   --skills "ponytail:ponytail full, other"           (default-skills list)
-  --dry-run   show every file that would change, change nothing`
+  --dry-run   show every file that would change, change nothing
 
-export const run = (argv: readonly string[], home = homedir(), log: (line: string) => void = line => console.log(line)): number => {
+project options:
+  --mods ...  also accepts context-meter, cli-passthrough   (default: guardrails,compaction-guard,context-audit,default-skills)
+  --skills, --dry-run as above; --remove takes out what project added`
+
+export const run = (
+  argv: readonly string[],
+  home = homedir(),
+  log: (line: string) => void = line => console.log(line),
+  cwd = process.cwd(),
+): number => {
   const [command = 'install', ...rest] = argv
   try {
     switch (command) {
@@ -220,6 +213,8 @@ export const run = (argv: readonly string[], home = homedir(), log: (line: strin
         return uninstall(rest, home, log)
       case 'doctor':
         return doctor(home, log)
+      case 'project':
+        return runProject(rest, cwd, log)
       default:
         log(USAGE)
         return command === 'help' || command === '--help' ? 0 : 1

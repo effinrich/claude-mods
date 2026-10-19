@@ -151,3 +151,18 @@ export const countOurHooks = (home: string, tool: ToolName): number => {
   if (existing === 'invalid') return 0
   return Object.values(record(existing.hooks)).flatMap(asArray).filter(isOurs).length
 }
+
+const commandStrings = (value: unknown): string[] => {
+  if (typeof value === 'string') return [value]
+  if (typeof value !== 'object' || value === null) return []
+  return Object.values(value).flatMap(commandStrings)
+}
+
+// The quoted executable at the front of each of our hook commands (see hookCommand).
+export const hookNodePaths = (home: string, tool: ToolName): string[] => {
+  const existing = readJsonObject(hookConfigPath(home, tool))
+  if (existing === 'invalid') return []
+  const entries = Object.values(record(existing.hooks)).flatMap(asArray).filter(isOurs)
+  const nodes = commandStrings(entries).flatMap(command => /^"([^"]+)" "[^"]*claude-mods[^"]*"/.exec(command)?.[1] ?? [])
+  return [...new Set(nodes)]
+}

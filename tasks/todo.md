@@ -1,6 +1,6 @@
 # Plan: one npx installer, mods across coding agents
 
-Status: **v1 built (Codex, Gemini CLI, Cursor, Copilot CLI); opencode is v2.** Facts below come from each tool's official docs as of 2026-10-19; items marked (unverified) were not confirmed there.
+Status: **v1 built (Codex, Gemini CLI, Cursor, Copilot CLI); opencode is v2.** 0.4.0 adds `project` (shared repo files), payload capture for the undocumented Cursor/Copilot edit fields, skipped re-checks on unchanged files, a stale-Node warning in `doctor`, and CI. Facts below come from each tool's official docs as of 2026-10-19; items marked (unverified) were not confirmed there.
 
 ## How it fits together
 

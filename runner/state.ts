@@ -8,6 +8,8 @@ import { DEFAULT_CONFIG, type Config, type ToolName } from './types.ts'
 export type SessionState = {
   isDirty: boolean
   lastResult: 'pass' | 'fail' | undefined
+  // Content hashes of the touched files when checks last passed; equal hashes mean the checks need not run again.
+  passHashes: Record<string, string> | undefined
   stopBlocks: number
   originalTask: string | undefined
   prompts: string[]
@@ -24,6 +26,7 @@ export const modsHome = (): string => process.env.CLAUDE_MODS_HOME ?? join(homed
 const emptyState = (): SessionState => ({
   isDirty: false,
   lastResult: undefined,
+  passHashes: undefined,
   stopBlocks: 0,
   originalTask: undefined,
   prompts: [],

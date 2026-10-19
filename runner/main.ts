@@ -1,4 +1,5 @@
 import { ADAPTERS } from './adapters/index.ts'
+import { capturePayload, isDebugOn } from './debug.ts'
 import { decide, projectRoot, runChecks } from './engine.ts'
 import { loadConfig, log, pruneOldState } from './state.ts'
 import { rec, TOOLS, type ToolName } from './types.ts'
@@ -23,8 +24,10 @@ const runHook = async (tool: ToolName, event: string): Promise<number> => {
   const raw = await readStdin()
   const payload = rec(raw.trim() === '' ? {} : JSON.parse(raw))
   const now = new Date()
+  const config = loadConfig()
+  if (isDebugOn(config)) capturePayload(tool, event, payload, now)
   pruneOldState(now.getTime())
-  const verdict = await decide(tool, adapter.capabilities, loadConfig(), adapter.parse(event, payload), now)
+  const verdict = await decide(tool, adapter.capabilities, config, adapter.parse(event, payload), now)
   const reply = adapter.emit(event, verdict)
   if (reply.stdout !== '') process.stdout.write(reply.stdout)
   if (reply.stderr !== '') process.stderr.write(reply.stderr)

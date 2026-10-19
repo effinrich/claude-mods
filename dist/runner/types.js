@@ -5,6 +5,7 @@ export const DEFAULT_CONFIG = {
     draftSpecs: true,
     allowImports: [],
     checkTimeoutMs: 10 * 60_000,
+    debug: false,
 };
 export const ALLOW = { kind: 'allow' };
 export const str = (value) => (typeof value === 'string' ? value : undefined);

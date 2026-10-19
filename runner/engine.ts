@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
@@ -131,9 +132,28 @@ export const runChecks = (config: Config, root: string): string | undefined => {
   return failure === '' ? undefined : failure
 }
 
-const recordChecks = (state: SessionState, failure: string | undefined): void => {
+const hashFile = (path: string): string => {
+  try {
+    return createHash('sha256').update(readFileSync(path)).digest('hex')
+  } catch {
+    return 'missing'
+  }
+}
+
+const touchedHashes = (state: SessionState, root: string): Record<string, string> =>
+  Object.fromEntries(state.touched.map(path => [path, hashFile(isAbsolute(path) ? path : join(root, path))]))
+
+// Every edit lands in `touched`, so if none of those files differ from the last passing run, neither do the checks.
+const isUnchangedSincePass = (state: SessionState, root: string): boolean => {
+  const passed = state.passHashes
+  if (state.lastResult !== 'pass' || passed === undefined) return false
+  return Object.entries(touchedHashes(state, root)).every(([path, hash]) => passed[path] === hash)
+}
+
+const recordChecks = (state: SessionState, root: string, failure: string | undefined): void => {
   state.lastResult = failure === undefined ? 'pass' : 'fail'
   state.isDirty = failure !== undefined
+  state.passHashes = failure === undefined ? touchedHashes(state, root) : undefined
 }
 
 const writeHandoff = (state: SessionState, root: string, now: Date): string => {
@@ -229,16 +249,25 @@ const decideWithState = async (
         return { kind: 'deny', reason: `guardrails: blocked \`${shown}\`: ${reason}. If the user wants it, they can run it themselves.` }
       }
       if (isGitCommit(event.command) && (state.isDirty || state.lastResult !== 'pass')) {
+        if (isUnchangedSincePass(state, root)) {
+          state.isDirty = false
+          return ALLOW
+        }
         const failure = runChecks(config, root)
-        recordChecks(state, failure)
+        recordChecks(state, root, failure)
         if (failure !== undefined) return { kind: 'deny', reason: `guardrails: commit blocked, checks fail:\n${failure}` }
       }
       return ALLOW
     }
     case 'stop': {
       if (!config.mods.guardrails || !config.stopGate || !state.isDirty) return ALLOW
+      if (isUnchangedSincePass(state, root)) {
+        state.isDirty = false
+        state.stopBlocks = 0
+        return ALLOW
+      }
       const failure = runChecks(config, root)
-      recordChecks(state, failure)
+      recordChecks(state, root, failure)
       if (failure === undefined) {
         state.stopBlocks = 0
         return ALLOW

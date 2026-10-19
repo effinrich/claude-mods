@@ -16,10 +16,13 @@ export class Plan {
     note(text) {
         this.notes.push(text);
     }
-    apply(stamp) {
+    // `backupPath` moves backups out of the way, for example out of a repo's working tree.
+    apply(stamp, backupPath = path => `${path}.claude-mods-backup-${stamp}`) {
         for (const change of this.changes) {
             if (!change.isOwned && existsSync(change.path) && statSync(change.path).isFile()) {
-                copyFileSync(change.path, `${change.path}.claude-mods-backup-${stamp}`);
+                const backup = backupPath(change.path);
+                mkdirSync(dirname(backup), { recursive: true });
+                copyFileSync(change.path, backup);
             }
             if (change.action === 'remove') {
                 rmSync(change.path, { recursive: true, force: true });

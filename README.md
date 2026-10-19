@@ -15,7 +15,8 @@ It detects which of the five tools you have and wires each one up. Claude Code g
 | `npx github:effinrich/claude-mods install` | install (the default command) |
 | `… update` | reinstall with your last choices, after a new version lands |
 | `… uninstall` | remove only what it added (hook entries, `/ship` and `/checks`, copied skills, the marked instruction block) |
-| `… doctor` | what is installed where, plus recent hook errors |
+| `… doctor` | what is installed where, a stale Node path in the hooks, payload capture status, recent hook errors |
+| `… project` | add shared claude-mods files to the repo you are in; `--remove` takes them out (see below) |
 
 Options: `--tools claude,codex,gemini,cursor,copilot` (default: detected), `--mods guardrails,compaction-guard,context-audit,default-skills` (default: all), `--skills "ponytail:ponytail full"`, `--dry-run`.
 
@@ -35,7 +36,9 @@ Needs Node 20 or newer. MIT licensed.
 | Handoff returned after compaction | ✓ SessionStart `compact` | ✓ next prompt | ◐ next session start | ◐ next session start |
 | Drift check on global instruction files | ✓ | ✓ | ✓ | ✓ |
 | `/ship` and `/checks` | skills (`$ship`) | `/ship` command | skills | skills |
-| Default skills (ponytail) always on | ✓ AGENTS.md | ✓ GEMINI.md | ◐ skill copied; add the rule in Cursor Settings → Rules | ✓ copilot-instructions.md |
+| Default skills (ponytail) always on | ✓ AGENTS.md | ✓ GEMINI.md | ◐ skill copied; add the rule in Cursor Settings → Rules, or per repo with `project` | ✓ copilot-instructions.md |
+
+The end-of-turn gate and the commit gate skip the check run when none of the files edited this session changed since the checks last passed.
 
 Not ported: context-meter (these tools have no custom status line command) and cli-passthrough (it is specific to Claude Code's own CLI). The context-percentage hold is also missing, because none of these tools tell hooks how full the context is.
 
@@ -47,6 +50,51 @@ Not ported: context-meter (these tools have no custom status line command) and c
 - **Copilot CLI**: start a new session.
 
 Then check it works: ask the agent to run `git reset --hard`. It should be refused with a `guardrails:` reason. If it isn't, run `doctor` and see `~/.claude-mods/hook.log`.
+
+The hooks call Node by the absolute path it had at install time, so GUI apps without your shell's PATH still find it. After a Node upgrade (nvm, fnm, Homebrew) that path can disappear; `doctor` warns about it, and `update` fixes it.
+
+### Shared repo setup
+
+Run this inside a repo (any folder in it; the files go at the git root):
+
+```
+npx github:effinrich/claude-mods project [--mods ...] [--skills ...] [--dry-run] [--remove]
+```
+
+| File | What claude-mods writes |
+|---|---|
+| `.cursor/rules/claude-mods.mdc` | an always-applied Cursor rule (owned by claude-mods) |
+| `AGENTS.md` | a marked block at the end; the rest of the file is left as is |
+| `.claude/settings.json` | merged in: the `claude-mods` marketplace under `extraKnownMarketplaces` and `<mod>@claude-mods: true` under `enabledPlugins` |
+
+The rule and the block carry the guardrails lines and one line per default skill. Each skill line points at `~/.agents/skills/<skill>/SKILL.md` and tells the agent to skip it when that file is missing, so teammates without the skill are not affected. `--mods` also accepts `context-meter` and `cli-passthrough` for the Claude Code settings. A plugin someone set to `false` in the settings stays off.
+
+`--remove` takes out exactly what `project` added and deletes files it created. Before changing a file you already had, it saves a copy under `~/.claude-mods/backups/<repo>-<hash>/<time>/`, outside your working tree. Re-running is safe.
+
+### Help pin the Cursor and Copilot edit fields
+
+Cursor's `preToolUse` input for its Write tool and Copilot CLI's `toolArgs` for `edit` and `create` are not documented. The adapters try the likely field names and let an edit through when they find no path, so scope and lockfile blocks can miss there. (Cursor's `afterFileEdit` still marks the turn for the end-of-turn gate; Copilot has no such hook.) One real payload is enough to fix that:
+
+1. Turn on capture with `CLAUDE_MODS_DEBUG=1` in the tool's environment, or add `"debug": true` to `~/.claude-mods/config.json` (a reinstall keeps it).
+2. Ask the agent to create or edit a small file.
+3. Open `~/.claude-mods/payloads.log`. Each line has the tool, event, top-level keys, argument keys and the payload with long strings cut at 200 characters.
+4. Send one `preToolUse` line for a Write (Cursor) or `edit`/`create` (Copilot) in a GitHub issue. Check it first: it holds part of the file content and your paths.
+
+Turn capture off again afterwards. The log rolls over at 2 MB.
+
+## New users and teams
+
+1. **Each person, once per machine**: install Node 20 or newer, then run `npx github:effinrich/claude-mods`. Hooks and skills live in each user's own config, so nobody can install them for someone else.
+2. **Each shared repo, once**: run `npx github:effinrich/claude-mods project` and commit `.cursor/rules/claude-mods.mdc`, `AGENTS.md` and `.claude/settings.json`. Claude Code then offers the claude-mods plugins to everyone who opens the repo.
+3. **Default skills** (`ponytail`, `feature-based-architecture`) are not part of this repo. Each person's install copies them from their own Claude Code installs into `~/.agents/skills/`. Anyone who lacks a skill just skips it; nothing breaks.
+4. **First-run approvals**, per person and tool:
+   - Claude Code: when you open the repo, accept the claude-mods marketplace and the plugins it lists.
+   - Codex: approve the hooks in `/hooks`; they do not run until you do.
+   - Gemini CLI: confirm the new hooks when it lists them.
+   - Cursor: restart Cursor.
+   - Copilot CLI: start a new session.
+
+Then run `doctor` to check, and the `git reset --hard` test above.
 
 ## Claude Code mods
 
@@ -147,4 +195,4 @@ Answer `y` to add the marketplace, then pick the user scope. From a shell, use `
 
 - Shared logic lives in `core/`. Each Claude plugin carries a generated copy, so after editing `core/` run `npm run build`; it syncs the copies and compiles `dist/`.
 - `dist/` is committed, because `npx github:` installs run no build step.
-- Tests: `npm test` covers the runner, adapters and installer; `claude plugin test <plugin>` covers each Claude mod.
+- Tests: `npm test` covers the runner, adapters and installer; `npm run check` checks the core copies and types; `claude plugin test <plugin>` covers each Claude mod. CI runs the first two on Node 20 and 22 and fails when `dist/` does not match a fresh build.

@@ -133,3 +133,19 @@ export const countOurHooks = (home, tool) => {
         return 0;
     return Object.values(record(existing.hooks)).flatMap(asArray).filter(isOurs).length;
 };
+const commandStrings = (value) => {
+    if (typeof value === 'string')
+        return [value];
+    if (typeof value !== 'object' || value === null)
+        return [];
+    return Object.values(value).flatMap(commandStrings);
+};
+// The quoted executable at the front of each of our hook commands (see hookCommand).
+export const hookNodePaths = (home, tool) => {
+    const existing = readJsonObject(hookConfigPath(home, tool));
+    if (existing === 'invalid')
+        return [];
+    const entries = Object.values(record(existing.hooks)).flatMap(asArray).filter(isOurs);
+    const nodes = commandStrings(entries).flatMap(command => /^"([^"]+)" "[^"]*claude-mods[^"]*"/.exec(command)?.[1] ?? []);
+    return [...new Set(nodes)];
+};

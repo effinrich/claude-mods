@@ -40,7 +40,7 @@ const geminiCommand = (description: string, skill: string): string =>
 const isManagedFile = (path: string): boolean => !existsSync(path) || readFileSync(path, 'utf8').includes(MANAGED)
 
 // A skill folder holding only our SKILL.md goes with it; anything the user added there stays.
-const planManagedFile = (plan: Plan, path: string, content: string | undefined): void => {
+export const planManagedFile = (plan: Plan, path: string, content: string | undefined): void => {
   if (!isManagedFile(path)) {
     plan.note(`${path} exists and is not managed by claude-mods, so it was left alone.`)
     return
@@ -137,6 +137,26 @@ export const planDefaultSkills = (
   return found
 }
 
+const GUARDRAIL_LINES = [
+  '- Follow `.claude/spec.md` exactly when it exists; hooks block edits outside its scope.',
+  '- Put out-of-scope ideas under "Suggestions:" (at most 3 bullets) instead of doing them. Be terse.',
+  '- Never invent APIs, packages, flags or file contents: read, search, or say you do not know.',
+]
+
+// `isOptional`: for files shared in a repo, where a teammate may not have the skill installed.
+export const instructionLines = (
+  hasGuardrails: boolean,
+  skills: readonly SkillRef[],
+  skillFile: (skill: string) => string,
+  isOptional = false,
+): string[] => [
+  ...(hasGuardrails ? GUARDRAIL_LINES : []),
+  ...skills.map(
+    ref =>
+      `- Always on: the \`${ref.skill}\` skill${ref.args ? ` with arguments \`${ref.args}\`` : ''}. At the start of each session, read ${skillFile(ref.skill)} and follow it${isOptional ? '; if that file does not exist, skip this line' : ''}.`,
+  ),
+]
+
 export const planInstructions = (
   plan: Plan,
   home: string,
@@ -146,7 +166,7 @@ export const planInstructions = (
   for (const tool of tools) {
     const path = instructionsPath(home, tool)
     if (path === undefined) {
-      if (lines !== undefined && lines.length > 0) plan.note('cursor: add the guardrails and default-skill lines to Cursor Settings → Rules yourself (Cursor keeps user rules in its UI, not a file).')
+      if (lines !== undefined && lines.length > 0) plan.note('cursor: add the guardrails and default-skill lines to Cursor Settings → Rules yourself (Cursor keeps user rules in its UI, not a file), or run `project` in each repo.')
       continue
     }
     const current = readText(path) ?? ''

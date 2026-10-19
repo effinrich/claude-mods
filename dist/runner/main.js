@@ -1,4 +1,5 @@
 import { ADAPTERS } from "./adapters/index.js";
+import { capturePayload, isDebugOn } from "./debug.js";
 import { decide, projectRoot, runChecks } from "./engine.js";
 import { loadConfig, log, pruneOldState } from "./state.js";
 import { rec, TOOLS } from "./types.js";
@@ -20,8 +21,11 @@ const runHook = async (tool, event) => {
     const raw = await readStdin();
     const payload = rec(raw.trim() === '' ? {} : JSON.parse(raw));
     const now = new Date();
+    const config = loadConfig();
+    if (isDebugOn(config))
+        capturePayload(tool, event, payload, now);
     pruneOldState(now.getTime());
-    const verdict = await decide(tool, adapter.capabilities, loadConfig(), adapter.parse(event, payload), now);
+    const verdict = await decide(tool, adapter.capabilities, config, adapter.parse(event, payload), now);
     const reply = adapter.emit(event, verdict);
     if (reply.stdout !== '')
         process.stdout.write(reply.stdout);

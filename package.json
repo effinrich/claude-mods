@@ -1,6 +1,6 @@
 {
   "name": "claude-mods",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Guardrails, compaction handoffs and drift checks for Claude Code, Codex CLI, Gemini CLI, Cursor and Copilot CLI.",
   "type": "module",
   "license": "MIT",
@@ -15,9 +15,10 @@
   "scripts": {
     "build": "node scripts/sync-core.mjs && tsc -p tsconfig.runner.json",
     "check": "node scripts/sync-core.mjs --check && tsc -p tsconfig.runner.json --noEmit",
-    "test": "npm run build && node --test \"dist/**/tests/*.test.js\""
+    "test": "npm run build && node --test dist/*/tests/*.test.js"
   },
   "devDependencies": {
-    "@types/node": "22.15.3"
+    "@types/node": "22.15.3",
+    "typescript": "6.0.2"
   }
 }

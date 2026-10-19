@@ -10,6 +10,7 @@ export const modsHome = () => process.env.CLAUDE_MODS_HOME ?? join(homedir(), '.
 const emptyState = () => ({
     isDirty: false,
     lastResult: undefined,
+    passHashes: undefined,
     stopBlocks: 0,
     originalTask: undefined,
     prompts: [],

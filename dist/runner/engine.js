@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
@@ -120,9 +121,26 @@ export const runChecks = (config, root) => {
     const failure = summarizeFailures(runs, FAILURE_LINES);
     return failure === '' ? undefined : failure;
 };
-const recordChecks = (state, failure) => {
+const hashFile = (path) => {
+    try {
+        return createHash('sha256').update(readFileSync(path)).digest('hex');
+    }
+    catch {
+        return 'missing';
+    }
+};
+const touchedHashes = (state, root) => Object.fromEntries(state.touched.map(path => [path, hashFile(isAbsolute(path) ? path : join(root, path))]));
+// Every edit lands in `touched`, so if none of those files differ from the last passing run, neither do the checks.
+const isUnchangedSincePass = (state, root) => {
+    const passed = state.passHashes;
+    if (state.lastResult !== 'pass' || passed === undefined)
+        return false;
+    return Object.entries(touchedHashes(state, root)).every(([path, hash]) => passed[path] === hash);
+};
+const recordChecks = (state, root, failure) => {
     state.lastResult = failure === undefined ? 'pass' : 'fail';
     state.isDirty = failure !== undefined;
+    state.passHashes = failure === undefined ? touchedHashes(state, root) : undefined;
 };
 const writeHandoff = (state, root, now) => {
     const text = renderHandoff({ originalTask: state.originalTask, recentAsks: state.prompts, plan: undefined, todos: [], filesTouched: state.touched }, now, root.split(/[\\/]/).at(-1) ?? 'project').replace('Load it in a fresh session with /handoff-load.', `Saved to ${handoffPath(root)}.`);
@@ -203,8 +221,12 @@ const decideWithState = async (tool, capabilities, config, event, root, state, n
                 return { kind: 'deny', reason: `guardrails: blocked \`${shown}\`: ${reason}. If the user wants it, they can run it themselves.` };
             }
             if (isGitCommit(event.command) && (state.isDirty || state.lastResult !== 'pass')) {
+                if (isUnchangedSincePass(state, root)) {
+                    state.isDirty = false;
+                    return ALLOW;
+                }
                 const failure = runChecks(config, root);
-                recordChecks(state, failure);
+                recordChecks(state, root, failure);
                 if (failure !== undefined)
                     return { kind: 'deny', reason: `guardrails: commit blocked, checks fail:\n${failure}` };
             }
@@ -213,8 +235,13 @@ const decideWithState = async (tool, capabilities, config, event, root, state, n
         case 'stop': {
             if (!config.mods.guardrails || !config.stopGate || !state.isDirty)
                 return ALLOW;
+            if (isUnchangedSincePass(state, root)) {
+                state.isDirty = false;
+                state.stopBlocks = 0;
+                return ALLOW;
+            }
             const failure = runChecks(config, root);
-            recordChecks(state, failure);
+            recordChecks(state, root, failure);
             if (failure === undefined) {
                 state.stopBlocks = 0;
                 return ALLOW;

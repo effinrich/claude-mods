@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { beforeEach, describe, test } from 'node:test'
@@ -156,4 +156,32 @@ test('parses add, update, move and delete hunks from a Codex patch', () => {
     { path: 'c.ts', newText: 'fresh', oldText: 'old' },
     { path: 'd.ts', newText: '', oldText: '' },
   ])
+})
+
+describe('payload capture', () => {
+  const payloads = () => join(env.CLAUDE_MODS_HOME ?? '', 'payloads.log')
+  const toolArgs = JSON.stringify({ path: 'src/a.ts', file_text: 'x'.repeat(500) })
+
+  test('is off by default', () => {
+    hook('copilot', 'preToolUse', { sessionId: 'p1', cwd: root, toolName: 'create', toolArgs })
+    assert.equal(existsSync(payloads()), false)
+  })
+
+  test('CLAUDE_MODS_DEBUG=1 logs tool, event, keys and truncated values', () => {
+    env.CLAUDE_MODS_DEBUG = '1'
+    hook('copilot', 'preToolUse', { sessionId: 'p1', cwd: root, toolName: 'create', toolArgs })
+    const entry = JSON.parse(readFileSync(payloads(), 'utf8').trim()) as Record<string, any>
+    assert.equal(entry.tool, 'copilot')
+    assert.equal(entry.event, 'preToolUse')
+    assert.deepEqual(entry.keys, ['sessionId', 'cwd', 'toolName', 'toolArgs'])
+    assert.deepEqual(entry.argumentKeys, ['path', 'file_text'])
+    assert.match(entry.payload.toolArgs.file_text, /^x{200}… \(500 chars\)$/)
+  })
+
+  test('"debug": true in config.json turns it on too', () => {
+    mkdirSync(env.CLAUDE_MODS_HOME ?? '', { recursive: true })
+    writeFileSync(join(env.CLAUDE_MODS_HOME ?? '', 'config.json'), JSON.stringify({ debug: true }))
+    hook('cursor', 'preToolUse', { conversation_id: 'k', workspace_roots: [root], tool_name: 'Write', tool_input: { target: 'a' } })
+    assert.match(readFileSync(payloads(), 'utf8'), /"argumentKeys":\["target"\]/)
+  })
 })

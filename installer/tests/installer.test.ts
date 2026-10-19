@@ -111,3 +111,22 @@ test('does not overwrite a skill the user wrote', () => {
   assert.equal(read('.agents/skills/ship/SKILL.md'), '---\nname: ship\n---\nmy own ship')
   assert.ok(lines.some(line => line.includes('not managed by claude-mods')))
 })
+
+test('doctor warns when the Node baked into the hooks is gone and explains payload capture', () => {
+  install()
+  const path = join(home, '.cursor/hooks.json')
+  writeFileSync(path, readFileSync(path, 'utf8').replaceAll(JSON.stringify(process.execPath).slice(1, -1), '/gone/node/v18/bin/node'))
+  lines = []
+  assert.equal(run(['doctor'], home, line => lines.push(line)), 0)
+  assert.ok(lines.some(line => line.includes('/gone/node/v18/bin/node, which no longer exists')))
+  assert.ok(lines.some(line => line.includes('claude-mods update')))
+  assert.ok(lines.some(line => line.includes('CLAUDE_MODS_DEBUG=1')))
+})
+
+test('a reinstall keeps debug turned on in config.json', () => {
+  install()
+  const path = join(home, '.claude-mods/config.json')
+  writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), debug: true }))
+  install()
+  assert.equal(JSON.parse(readFileSync(path, 'utf8')).debug, true)
+})

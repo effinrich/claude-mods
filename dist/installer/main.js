@@ -3,15 +3,14 @@ import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } fr
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { modsHome } from "../runner/state.js";
+import { isDebugOn, payloadLogPath } from "../runner/debug.js";
+import { loadConfig, modsHome } from "../runner/state.js";
 import { DEFAULT_CONFIG, TOOLS } from "../runner/types.js";
+import { ALL_MODS, backupStamp, CLAUDE_EXTRAS, DEFAULT_SKILLS, describePlan, flag, MARKETPLACE, parseList } from "./cli.js";
 import { Plan, readJsonObject } from "./files.js";
-import { planCommands, planDefaultSkills, planInstructions } from "./skills.js";
-import { configDir, countOurHooks, hookConfigPath, planHooks } from "./tools.js";
-const ALL_MODS = ['guardrails', 'compaction-guard', 'context-audit', 'default-skills'];
-const CLAUDE_EXTRAS = ['context-meter', 'cli-passthrough'];
-const DEFAULT_SKILLS = 'ponytail:ponytail full, feature-based-architecture';
-const MARKETPLACE = 'effinrich/claude-mods';
+import { runProject } from "./project.js";
+import { instructionLines, planCommands, planDefaultSkills, planInstructions } from "./skills.js";
+import { configDir, countOurHooks, hookConfigPath, hookNodePaths, planHooks } from "./tools.js";
 const BINARIES = {
     claude: ['claude'],
     codex: ['codex'],
@@ -26,45 +25,23 @@ const runtimeMain = () => join(runtimeDir(), 'dist', 'runner', 'main.js');
 const choicesPath = () => join(modsHome(), 'install.json');
 const onPath = (name) => (process.env.PATH ?? '').split(delimiter).some(dir => ['', '.cmd', '.exe'].some(suffix => dir !== '' && existsSync(join(dir, `${name}${suffix}`))));
 export const detectTools = (home) => ['claude', ...TOOLS].filter(tool => BINARIES[tool].some(onPath) || (tool !== 'claude' && existsSync(configDir(home, tool))));
-const flag = (args, name) => {
-    const index = args.indexOf(`--${name}`);
-    if (index !== -1)
-        return args[index + 1];
-    return args.find(arg => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
-};
-const parseList = (value, allowed) => {
-    if (value === undefined)
-        return undefined;
-    if (value === 'all')
-        return [...allowed];
-    const items = value.split(',').map(item => item.trim()).filter(item => item !== '');
-    const unknown = items.filter(item => !allowed.includes(item));
-    if (unknown.length > 0)
-        throw new Error(`unknown: ${unknown.join(', ')} (choose from ${allowed.join(', ')})`);
-    return items;
-};
 const loadChoices = () => {
     const stored = readJsonObject(choicesPath());
     return stored === 'invalid' || !Array.isArray(stored.tools) ? undefined : stored;
 };
+// `debug` is the one setting a user edits by hand, so a reinstall keeps it.
 const runtimeConfig = (mods) => ({
     ...DEFAULT_CONFIG,
+    debug: (() => {
+        const current = readJsonObject(join(modsHome(), 'config.json'));
+        return current !== 'invalid' && current.debug === true;
+    })(),
     mods: {
         guardrails: mods.includes('guardrails'),
         compactionGuard: mods.includes('compaction-guard'),
         contextAudit: mods.includes('context-audit'),
     },
 });
-const instructionLines = (mods, skills, home) => [
-    ...(mods.includes('guardrails')
-        ? [
-            '- Follow `.claude/spec.md` exactly when it exists; hooks block edits outside its scope.',
-            '- Put out-of-scope ideas under "Suggestions:" (at most 3 bullets) instead of doing them. Be terse.',
-            '- Never invent APIs, packages, flags or file contents: read, search, or say you do not know.',
-        ]
-        : []),
-    ...skills.map(ref => `- Always on: the \`${ref.skill}\` skill${ref.args ? ` with arguments \`${ref.args}\`` : ''}. At the start of each session, read ${join(home, '.agents', 'skills', ref.skill, 'SKILL.md')} and follow it.`),
-];
 const runClaude = (args, isDryRun, log) => {
     log(`  $ claude ${args.join(' ')}`);
     if (isDryRun)
@@ -81,14 +58,8 @@ const planFor = (home, choices, isRemoving) => {
         planHooks(plan, home, tool, main);
     planCommands(plan, home, tools, choices.mods.includes('guardrails') ? main : undefined);
     const skills = choices.mods.includes('default-skills') ? planDefaultSkills(plan, home, tools, choices.skills, isRemoving) : [];
-    planInstructions(plan, home, tools, isRemoving ? undefined : instructionLines(choices.mods, skills, home));
+    planInstructions(plan, home, tools, isRemoving ? undefined : instructionLines(choices.mods.includes('guardrails'), skills, skill => join(home, '.agents', 'skills', skill, 'SKILL.md')));
     return plan;
-};
-const describePlan = (plan, log) => {
-    for (const change of plan.changes)
-        log(`  ${change.action === 'remove' ? 'remove' : 'write '} ${change.path}`);
-    for (const note of plan.notes)
-        log(`  note: ${note}`);
 };
 const install = (args, home, log, isUpdate) => {
     const stored = loadChoices();
@@ -116,7 +87,7 @@ const install = (args, home, log, isUpdate) => {
     const plan = planFor(home, choices, false);
     describePlan(plan, log);
     if (!isDryRun)
-        plan.apply(new Date().toISOString().replace(/[:.]/g, '-'));
+        plan.apply(backupStamp());
     if (choices.tools.includes('claude')) {
         log('Claude Code (marketplace plugins):');
         runClaude(['plugin', 'marketplace', isUpdate ? 'update' : 'add', isUpdate ? 'claude-mods' : MARKETPLACE], isDryRun, log);
@@ -143,7 +114,7 @@ const uninstall = (args, home, log) => {
     const plan = planFor(home, choices, true);
     describePlan(plan, log);
     if (!isDryRun) {
-        plan.apply(new Date().toISOString().replace(/[:.]/g, '-'));
+        plan.apply(backupStamp());
         rmSync(join(modsHome(), 'runtime'), { recursive: true, force: true });
         rmSync(choicesPath(), { force: true });
         rmSync(join(modsHome(), 'config.json'), { force: true });
@@ -156,6 +127,7 @@ const uninstall = (args, home, log) => {
     log(`Kept: handoffs and session state in ${modsHome()} (delete the folder to remove them). Backups of edited files end in .claude-mods-backup-<time>.`);
     return 0;
 };
+const missingNodePaths = (home) => [...new Set(TOOLS.flatMap(tool => hookNodePaths(home, tool)))].filter(node => !existsSync(node));
 const doctor = (home, log) => {
     const choices = loadChoices();
     log(`claude-mods ${version} · node ${process.version}`);
@@ -168,6 +140,14 @@ const doctor = (home, log) => {
         const status = count > 0 ? `${count} hook${count === 1 ? '' : 's'} in ${hookConfigPath(home, tool)}` : expected ? 'MISSING: run update' : 'not installed';
         log(`  ${tool.padEnd(8)} ${status}`);
     }
+    for (const node of missingNodePaths(home)) {
+        log(`  WARNING: the hooks run Node from ${node}, which no longer exists (a Node upgrade via nvm or similar?).`);
+        log('           Run `npx github:effinrich/claude-mods update` to point them at your current Node.');
+    }
+    const config = loadConfig();
+    log(isDebugOn(config)
+        ? `  payload capture: on, writing to ${payloadLogPath()}`
+        : `  payload capture: off. Turn it on with CLAUDE_MODS_DEBUG=1 or "debug": true in ${join(modsHome(), 'config.json')}; payloads go to ${payloadLogPath()}`);
     const logPath = join(modsHome(), 'hook.log');
     if (existsSync(logPath)) {
         const lines = readFileSync(logPath, 'utf8').trimEnd().split('\n').slice(-5);
@@ -184,13 +164,18 @@ commands:
   update      reinstall with your last choices (after pulling a new version)
   uninstall   remove hooks, skills and instruction blocks this installed
   doctor      show what is installed where
+  project     add shared claude-mods files to the current repo (--remove takes them out)
 
 options:
   --tools claude,codex,gemini,cursor,copilot | all   (default: detected)
   --mods guardrails,compaction-guard,context-audit,default-skills | all   (default: all)
   --skills "ponytail:ponytail full, other"           (default-skills list)
-  --dry-run   show every file that would change, change nothing`;
-export const run = (argv, home = homedir(), log = line => console.log(line)) => {
+  --dry-run   show every file that would change, change nothing
+
+project options:
+  --mods ...  also accepts context-meter, cli-passthrough   (default: guardrails,compaction-guard,context-audit,default-skills)
+  --skills, --dry-run as above; --remove takes out what project added`;
+export const run = (argv, home = homedir(), log = line => console.log(line), cwd = process.cwd()) => {
     const [command = 'install', ...rest] = argv;
     try {
         switch (command) {
@@ -202,6 +187,8 @@ export const run = (argv, home = homedir(), log = line => console.log(line)) => 
                 return uninstall(rest, home, log);
             case 'doctor':
                 return doctor(home, log);
+            case 'project':
+                return runProject(rest, cwd, log);
             default:
                 log(USAGE);
                 return command === 'help' || command === '--help' ? 0 : 1;

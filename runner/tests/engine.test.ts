@@ -103,3 +103,25 @@ test('reports changes to global instruction files between sessions', async () =>
   assert.match(second.kind === 'context' ? second.text : '', /AGENTS\.md changed: \+1 \/ -0 lines, 1 flagged/)
   assert.ok(existsSync(join(process.env.CLAUDE_MODS_HOME ?? '', 'state', 'drift-codex.json')))
 })
+
+test('skips the end-of-turn checks when no touched file changed since they last passed', async () => {
+  write('package.json', JSON.stringify({ name: 'app', scripts: { lint: `node -e "require('fs').appendFileSync('runs.txt','x')"` } }))
+  const runs = () => (existsSync(join(root, 'runs.txt')) ? readFileSync(join(root, 'runs.txt'), 'utf8').length : 0)
+  const edit = (text: string) => {
+    write('src/a.ts', text)
+    return run({ ...base(), kind: 'edit', edits: [{ path: join(root, 'src/a.ts'), newText: text, oldText: undefined }] })
+  }
+
+  await edit('export const a = 1')
+  assert.equal((await run({ ...base(), kind: 'stop', isRepeat: false })).kind, 'allow')
+  assert.equal(runs(), 1)
+
+  await edit('export const a = 1')
+  assert.equal((await run({ ...base(), kind: 'stop', isRepeat: false })).kind, 'allow')
+  assert.equal((await run({ ...base(), kind: 'shell', command: 'git commit -m x' })).kind, 'allow')
+  assert.equal(runs(), 1)
+
+  await edit('export const a = 2')
+  await run({ ...base(), kind: 'stop', isRepeat: false })
+  assert.equal(runs(), 2)
+})
