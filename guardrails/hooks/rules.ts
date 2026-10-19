@@ -1,3 +1,4 @@
+// Generated from core/rules.ts by scripts/sync-core.mjs. Edit core/rules.ts, then run the script.
 type Rule = { pattern: RegExp; reason: string; isTypeScriptOnly?: true }
 
 const COMMAND_RULES: readonly Rule[] = [

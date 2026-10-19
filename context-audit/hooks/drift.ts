@@ -1,3 +1,4 @@
+// Generated from core/drift.ts by scripts/sync-core.mjs. Edit core/drift.ts, then run the script.
 export type FileSnapshot = { sha: string; lines: readonly string[] }
 
 export type Snapshot = {

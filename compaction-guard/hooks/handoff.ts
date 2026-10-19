@@ -1,4 +1,11 @@
-import type { SessionMessage } from 'claude-code'
+// Generated from core/handoff.ts by scripts/sync-core.mjs. Edit core/handoff.ts, then run the script.
+// The part of Claude Code's SessionMessage the handoff reads, kept local so core has no engine dependency.
+export type SessionMessage = {
+  role: 'user' | 'assistant'
+  text: string
+  toolUses: readonly { tool: string; input: Readonly<Record<string, unknown>>; isError?: true }[]
+  toolResults?: readonly unknown[]
+}
 
 export type Handoff = {
   originalTask: string | undefined

@@ -1,0 +1,23 @@
+{
+  "name": "claude-mods",
+  "version": "0.2.0",
+  "description": "Guardrails, compaction handoffs and drift checks for Claude Code, Codex CLI, Gemini CLI, Cursor and Copilot CLI.",
+  "type": "module",
+  "license": "UNLICENSED",
+  "private": true,
+  "author": "Rich Tillman",
+  "bin": {
+    "claude-mods": "bin/claude-mods.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/sync-core.mjs && tsc -p tsconfig.runner.json",
+    "check": "node scripts/sync-core.mjs --check && tsc -p tsconfig.runner.json --noEmit",
+    "test": "npm run build && node --test \"dist/**/tests/*.test.js\""
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3"
+  }
+}

@@ -1,3 +1,4 @@
+// Generated from core/checks.ts by scripts/sync-core.mjs. Edit core/checks.ts, then run the script.
 export type CheckCommand = { label: string; argv: readonly string[] }
 
 export type CheckRun = { label: string; exitCode: number; output: string }

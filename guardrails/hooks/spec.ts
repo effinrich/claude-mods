@@ -1,3 +1,4 @@
+// Generated from core/spec.ts by scripts/sync-core.mjs. Edit core/spec.ts, then run the script.
 export type Spec = {
   scope: readonly string[]
   forbid: readonly string[]

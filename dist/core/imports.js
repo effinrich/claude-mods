@@ -1,0 +1,88 @@
+const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
+const BUILTINS = new Set([
+    'assert', 'async_hooks', 'buffer', 'child_process', 'cluster', 'console', 'constants', 'crypto', 'dgram',
+    'diagnostics_channel', 'dns', 'domain', 'events', 'fs', 'http', 'http2', 'https', 'inspector', 'module', 'net',
+    'os', 'path', 'perf_hooks', 'process', 'punycode', 'querystring', 'readline', 'repl', 'stream', 'string_decoder',
+    'sys', 'test', 'timers', 'tls', 'trace_events', 'tty', 'url', 'util', 'v8', 'vm', 'wasi', 'worker_threads', 'zlib',
+]);
+const LOCAL_PREFIXES = ['.', '/', '#', '~', '@/', 'virtual:', 'node:', 'bun:', 'data:', 'http:', 'https:', 'npm:', 'jsr:'];
+// Value imports only: `import type` and `export type` never reach the runtime.
+const IMPORT_PATTERNS = [
+    /\bimport\s+(?!type\b)(?:[\w*{}\s,$]+\s+from\s+)?['"]([^'"]+)['"]/g,
+    /\bexport\s+(?!type\b)[\w*{}\s,$]+\s+from\s+['"]([^'"]+)['"]/g,
+    /\brequire\(\s*['"]([^'"]+)['"]\s*\)/g,
+    /\bimport\(\s*['"]([^'"]+)['"]\s*\)/g,
+];
+export const isSourceFile = (path) => SOURCE_FILE.test(path);
+export const packageName = (specifier) => {
+    if (LOCAL_PREFIXES.some(prefix => specifier.startsWith(prefix)))
+        return undefined;
+    const segments = specifier.split('/');
+    const name = specifier.startsWith('@') ? segments.slice(0, 2).join('/') : segments[0];
+    if (name === undefined || name === '' || BUILTINS.has(name))
+        return undefined;
+    return name;
+};
+export const importedPackages = (code) => {
+    const names = new Set();
+    for (const pattern of IMPORT_PATTERNS) {
+        for (const match of code.matchAll(pattern)) {
+            const name = packageName(match[1] ?? '');
+            if (name !== undefined)
+                names.add(name);
+        }
+    }
+    return [...names];
+};
+// Imports the edit adds: those in the new text that the replaced text did not already have.
+export const addedPackages = (newCode, oldCode) => {
+    const before = new Set(importedPackages(oldCode));
+    return importedPackages(newCode).filter(name => !before.has(name));
+};
+export const declaredDependencies = (packageJson) => {
+    const names = new Set();
+    try {
+        const parsed = JSON.parse(packageJson);
+        if (typeof parsed !== 'object' || parsed === null)
+            return names;
+        const record = parsed;
+        if (typeof record.name === 'string')
+            names.add(record.name);
+        for (const field of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+            const deps = record[field];
+            if (typeof deps === 'object' && deps !== null)
+                for (const name of Object.keys(deps))
+                    names.add(name);
+        }
+    }
+    catch {
+        return names;
+    }
+    return names;
+};
+const stripJsonComments = (text) => text.replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (_, quoted) => quoted ?? '');
+// tsconfig `paths` keys (`@app/*` → `@app`) count as local aliases, not packages.
+export const pathAliases = (tsconfig) => {
+    try {
+        const parsed = JSON.parse(stripJsonComments(tsconfig).replace(/,\s*([}\]])/g, '$1'));
+        const paths = parsed.compilerOptions?.paths;
+        return paths === undefined ? [] : Object.keys(paths).map(key => key.replace(/\/\*$/, '').replace(/\*$/, ''));
+    }
+    catch {
+        return [];
+    }
+};
+export const parentDirs = (filePath) => {
+    const dirs = [];
+    let dir = filePath.replace(/[\\/][^\\/]*$/, '');
+    while (dir !== '' && !dirs.includes(dir)) {
+        dirs.push(dir);
+        const parent = dir.replace(/[\\/][^\\/]*$/, '');
+        if (parent === dir)
+            break;
+        dir = parent;
+    }
+    if (filePath.startsWith('/') && !dirs.includes('/'))
+        dirs.push('/');
+    return dirs;
+};

@@ -1,3 +1,4 @@
+// Generated from core/skills.ts by scripts/sync-core.mjs. Edit core/skills.ts, then run the script.
 export type SkillRef = { plugin: string | undefined; skill: string; args: string }
 
 export const MAX_SKILL_CHARS = 16_000

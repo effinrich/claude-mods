@@ -1,3 +1,4 @@
+// Generated from core/imports.ts by scripts/sync-core.mjs. Edit core/imports.ts, then run the script.
 const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/
 
 const BUILTINS: ReadonlySet<string> = new Set([
