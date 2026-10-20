@@ -1,4 +1,5 @@
 import { ADAPTERS } from './adapters/index.ts'
+import { runCrew } from './crew.ts'
 import { capturePayload, isDebugOn } from './debug.ts'
 import { decide, projectRoot, runChecks } from './engine.ts'
 import { loadConfig, log, pruneOldState } from './state.ts'
@@ -37,8 +38,9 @@ const runHook = async (tool: ToolName, event: string): Promise<number> => {
 const main = async (): Promise<number> => {
   const [first, second] = process.argv.slice(2)
   if (first === 'check') return runChecksCommand(second ?? process.cwd())
+  if (first === 'crew') return runCrew(process.argv.slice(3), process.cwd(), line => console.log(line))
   if (!isTool(first) || second === undefined) {
-    process.stderr.write(`usage: claude-mods-hook <${TOOLS.join('|')}> <event> | check [dir]\n`)
+    process.stderr.write(`usage: claude-mods-hook <${TOOLS.join('|')}> <event> | check [dir] | crew <command> ...\n`)
     return 0
   }
   try {

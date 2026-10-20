@@ -2,6 +2,7 @@ import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 import { resolveChecks, summarizeFailures, type CheckRun } from './checks.ts'
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases, unresearchedPackages } from './imports.ts'
 import { isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from './rules.ts'
+import { judgeOwnership, MARKER, parseMarker, type Marker } from './crew.ts'
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH, type Spec } from './spec.ts'
 
 type Config = {
@@ -150,6 +151,20 @@ const missingPackage = async (
   return undefined
 }
 
+// A crew specialist's worktree carries a ticket marker at its root; the ticket, not the spec, decides what it may edit.
+const findMarker = async ($: EngineInterface, absolutePath: string): Promise<{ root: string; marker: Marker } | undefined> => {
+  for (const dir of parentDirs(absolutePath)) {
+    if (!(await $.fs.exists(`${dir}/${MARKER}`))) continue
+    const text = await $.fs.read(`${dir}/${MARKER}`).catch(() => undefined)
+    const marker = typeof text === 'string' ? parseMarker(text) : undefined
+    return marker === undefined ? undefined : { root: dir, marker }
+  }
+  return undefined
+}
+
+const isInCrewWorktree = async ($: EngineInterface, path: string): Promise<boolean> =>
+  (await findMarker($, absoluteIn(await $.session.root(), path))) !== undefined
+
 const judgeEdit = async (
   $: EngineInterface,
   config: Config,
@@ -157,15 +172,22 @@ const judgeEdit = async (
   newCode: string,
   oldCode: string,
 ): Promise<string | undefined> => {
-  const root = await $.session.root()
+  const sessionRoot = await $.session.root()
+  const crew = await findMarker($, absoluteIn(sessionRoot, path))
+  const root = crew?.root ?? sessionRoot
   const relative = relativeTo(root, path)
   if (relative === undefined) return undefined
 
   if (isLockfile(relative)) {
     return `guardrails: don't hand-edit ${relative}. Change the manifest and let the package manager regenerate it.`
   }
-  const verdict = judgeScope(relative, await loadSpec($, root))
-  if (!verdict.isAllowed) return `guardrails: ${verdict.reason}. Don't edit it. ${SUGGEST}`
+  if (crew !== undefined) {
+    const reason = judgeOwnership(relative, crew.marker)
+    if (reason !== undefined) return `guardrails: ${reason}.`
+  } else {
+    const verdict = judgeScope(relative, await loadSpec($, root))
+    if (!verdict.isAllowed) return `guardrails: ${verdict.reason}. Don't edit it. ${SUGGEST}`
+  }
   if (!isSourceFile(relative) && !isCoverageConfig(relative)) return undefined
 
   const weakening = judgeWeakening(newCode, oldCode, relative)
@@ -299,7 +321,7 @@ export const register: Register = (on, options) => {
     const deny = await judgeEdit($, config, e.file_path, e.new_string, e.old_string)
     if (deny !== undefined) return { deny }
     const result = await next(e)
-    if (result.deny === undefined && result.isError !== true) state.isDirty = true
+    if (result.deny === undefined && result.isError !== true && !(await isInCrewWorktree($, e.file_path))) state.isDirty = true
     return result
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'guardrails: the edit check failed, so the edit is held.' }))
 
@@ -312,7 +334,7 @@ export const register: Register = (on, options) => {
       (isNew ? holdForResearch(config, e.file_path, e.content) : undefined)
     if (deny !== undefined) return { deny }
     const result = await next(e)
-    if (result.deny === undefined && result.isError !== true) state.isDirty = true
+    if (result.deny === undefined && result.isError !== true && !(await isInCrewWorktree($, e.file_path))) state.isDirty = true
     return result
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'guardrails: the write check failed, so the write is held.' }))
 

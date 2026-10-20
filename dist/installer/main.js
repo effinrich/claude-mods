@@ -8,6 +8,7 @@ import { loadConfig, modsHome } from "../runner/state.js";
 import { DEFAULT_CONFIG, TOOLS } from "../runner/types.js";
 import { ALL_MODS, backupStamp, CLAUDE_EXTRAS, DEFAULT_SKILLS, describePlan, flag, MARKETPLACE, parseList } from "./cli.js";
 import { Plan, readJsonObject } from "./files.js";
+import { runCrew } from "../runner/crew.js";
 import { runProject } from "./project.js";
 import { instructionLines, planCommands, planDefaultSkills, planInstructions } from "./skills.js";
 import { configDir, countOurHooks, hookConfigPath, hookNodePaths, planHooks } from "./tools.js";
@@ -165,6 +166,7 @@ commands:
   uninstall   remove hooks, skills and instruction blocks this installed
   doctor      show what is installed where
   project     add shared claude-mods files to the current repo (--remove takes them out)
+  crew        run a ticket plan with parallel specialist agents (crew help for details)
 
 options:
   --tools claude,codex,gemini,cursor,copilot | all   (default: detected)
@@ -173,7 +175,7 @@ options:
   --dry-run   show every file that would change, change nothing
 
 project options:
-  --mods ...  also accepts context-meter, cli-passthrough   (default: guardrails,compaction-guard,context-audit,default-skills)
+  --mods ...  also accepts context-meter, cli-passthrough, crew   (default: guardrails,compaction-guard,context-audit,default-skills)
   --skills, --dry-run as above; --remove takes out what project added`;
 export const run = (argv, home = homedir(), log = line => console.log(line), cwd = process.cwd()) => {
     const [command = 'install', ...rest] = argv;
@@ -189,6 +191,8 @@ export const run = (argv, home = homedir(), log = line => console.log(line), cwd
                 return doctor(home, log);
             case 'project':
                 return runProject(rest, cwd, log);
+            case 'crew':
+                return runCrew(rest, cwd, log);
             default:
                 log(USAGE);
                 return command === 'help' || command === '--help' ? 0 : 1;

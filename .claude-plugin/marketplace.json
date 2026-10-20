@@ -34,6 +34,11 @@
       "name": "default-skills",
       "source": "./default-skills",
       "description": "Pins chosen skills (ponytail by default) into every session's system prompt so they stay on through compaction."
+    },
+    {
+      "name": "crew",
+      "source": "./crew",
+      "description": "Plans a goal as tickets and runs specialist agents in parallel worktrees, each limited to its ticket's files, merging into one branch."
     }
   ]
 }

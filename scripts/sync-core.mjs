@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 const COPIES = {
-  guardrails: ['spec', 'imports', 'rules', 'checks'],
+  guardrails: ['spec', 'imports', 'rules', 'checks', 'crew'],
   'compaction-guard': ['handoff'],
   'context-audit': ['drift'],
   'default-skills': ['skills'],

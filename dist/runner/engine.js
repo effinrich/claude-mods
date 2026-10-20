@@ -1,18 +1,17 @@
-import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { resolveChecks, summarizeFailures } from "../core/checks.js";
 import { diffSnapshots, snapshotFile } from "../core/drift.js";
+import { judgeOwnership, MARKER, parseMarker } from "../core/crew.js";
 import { renderHandoff } from "../core/handoff.js";
+import { runCheckCommands } from "./run-checks.js";
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases } from "../core/imports.js";
 import { isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from "../core/rules.js";
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH } from "../core/spec.js";
 import { handoffPath, loadState, log, modsHome, rememberPrompt, rememberTouched, saveState, writeJson, } from "./state.js";
 import { ALLOW } from "./types.js";
 const MAX_STOP_BLOCKS = 2;
-const FAILURE_LINES = 30;
 const SPEC_DRAFT_MIN_CHARS = 1500;
 const SUGGEST = 'If it needs changing, list it under "Suggestions:" in your reply.';
 const readText = (path) => {
@@ -63,16 +62,32 @@ const missingPackage = (config, absolutePath, names) => {
         !aliases.some(alias => alias !== '' && (name === alias || name.startsWith(`${alias}/`))) &&
         !dirs.some(dir => existsSync(join(dir, 'node_modules', name, 'package.json'))));
 };
-export const judgeEdits = (config, root, event) => {
-    const spec = loadSpec(root);
+// A crew specialist's worktree carries a ticket marker at its root; the ticket, not the spec, decides what it may edit.
+export const findCrewMarker = (absolutePath) => {
+    for (const dir of parentDirs(absolutePath)) {
+        const text = readText(join(dir, MARKER));
+        if (text === undefined)
+            continue;
+        const marker = parseMarker(text);
+        return marker === undefined ? undefined : { root: dir, marker };
+    }
+    return undefined;
+};
+export const judgeEdits = (config, sessionRoot, event) => {
+    const spec = loadSpec(sessionRoot);
     for (const edit of event.edits) {
+        const crew = findCrewMarker(isAbsolute(edit.path) ? edit.path : join(sessionRoot, edit.path));
+        const root = crew?.root ?? sessionRoot;
         const rel = toRelative(root, edit.path);
         if (rel === undefined)
             continue;
         if (isLockfile(rel)) {
             return { kind: 'deny', reason: `guardrails: don't hand-edit ${rel}. Change the manifest and let the package manager regenerate it.` };
         }
-        const verdict = judgeScope(rel, spec);
+        const ownership = crew === undefined ? undefined : judgeOwnership(rel, crew.marker);
+        if (ownership !== undefined)
+            return { kind: 'deny', reason: `guardrails: ${ownership}.` };
+        const verdict = crew === undefined ? judgeScope(rel, spec) : { isAllowed: true };
         if (!verdict.isAllowed)
             return { kind: 'deny', reason: `guardrails: ${verdict.reason}. Don't edit it. ${SUGGEST}` };
         if (!isSourceFile(rel) && !isCoverageConfig(rel))
@@ -98,31 +113,7 @@ export const judgeEdits = (config, root, event) => {
     }
     return ALLOW;
 };
-export const runChecks = (config, root) => {
-    const entries = (() => {
-        try {
-            return readdirSync(root);
-        }
-        catch {
-            return [];
-        }
-    })();
-    const commands = resolveChecks(loadSpec(root)?.checks ?? [], readText(join(root, 'package.json')), new Set(entries));
-    const runs = commands.map(command => {
-        const [file = '', ...args] = command.argv;
-        const ran = spawnSync(file, args, {
-            cwd: root,
-            encoding: 'utf8',
-            timeout: config.checkTimeoutMs,
-            shell: process.platform === 'win32',
-            maxBuffer: 16 * 1024 * 1024,
-        });
-        const exitCode = ran.error !== undefined ? 127 : (ran.status ?? 1);
-        return { label: command.label, exitCode, output: `${ran.stdout ?? ''}\n${ran.stderr ?? ''}${ran.error ? `\n${ran.error.message}` : ''}` };
-    });
-    const failure = summarizeFailures(runs, FAILURE_LINES);
-    return failure === '' ? undefined : failure;
-};
+export const runChecks = (config, root) => runCheckCommands(config, root, loadSpec(root)?.checks ?? []);
 const hashFile = (path) => {
     try {
         return createHash('sha256').update(readFileSync(path)).digest('hex');
@@ -202,7 +193,8 @@ const decideWithState = async (tool, capabilities, config, event, root, state, n
             if (!config.mods.guardrails)
                 return ALLOW;
             const verdict = judgeEdits(config, root, event);
-            if (verdict.kind === 'allow') {
+            const isCrewOnly = event.edits.every(edit => findCrewMarker(isAbsolute(edit.path) ? edit.path : join(root, edit.path)) !== undefined);
+            if (verdict.kind === 'allow' && !isCrewOnly) {
                 state.isDirty = true;
                 rememberTouched(state, event.edits.map(edit => edit.path));
             }

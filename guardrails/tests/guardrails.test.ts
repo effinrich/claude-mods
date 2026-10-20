@@ -227,3 +227,16 @@ test('blocks snapshot rewrites and removed assertions', async ($, on) => {
   const removed = await edit($, `${ROOT}/src/a.test.ts`, "it('x', () => {})", "it('x', () => { expect(a).toBe(1) })")
   expect(removed.deny).toContain('removes assertions from a test (1 → 0)')
 })
+
+test('inside a crew worktree, the ticket decides what may be edited and the stop gate is left alone', async ($, on) => {
+  const tree = `${ROOT}/.claude/worktrees/02-api`
+  const marker = JSON.stringify({ feature: 'orders', ticket: '02-api', owns: ['src/server/**'], shared: ['package.json', 'src/routes.ts'] })
+  const { runs } = world(on, { ...BASE, [`${ROOT}/.claude/spec.md`]: SPEC, [`${tree}/.crew-ticket.json`]: marker, [`${tree}/package.json`]: PACKAGE_JSON })
+
+  expect((await edit($, `${tree}/src/server/orders.ts`, 'export const a = 1')).deny).toBeUndefined()
+  expect((await edit($, `${tree}/src/ui/a.tsx`, 'export const a = 1')).deny).toContain('not owned by ticket 02-api')
+  expect((await edit($, `${tree}/src/routes.ts`, 'export const a = 1')).deny).toContain('only the crew lead edits it')
+
+  await $.classic.Stop({})
+  expect(runs).toEqual([])
+})

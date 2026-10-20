@@ -176,6 +176,25 @@ Status line: `ctx 62% ⚠ · $3.41 · 2× compacted · 5h 72% · opus-5-5`. Warn
 
 Typing `claude plugin install x@y`, `claude mcp add …` or several of them joined by `&&` at the prompt runs them directly and shows the output, with no model turn. Anything with other shell syntax goes to the model as usual.
 
+### crew
+
+A lead agent plans a goal as a graph of tickets, then runs specialist agents in parallel, each in its own git worktree, and merges their work into one branch.
+
+- `/crew:crew-plan <feature> <goal>`: the lead reads the code, asks you the open questions (numbered, each with a recommendation), then writes `.claude/crew/<feature>/plan.md` and one file per ticket. Each ticket names a role (`designer`, `frontend`, `backend`, `tester`, `docs`), the files it owns, what blocks it and its checks. You approve the graph before anything runs.
+- `/crew:crew-run <feature>`: the lead creates the branch `crew/<feature>`, starts every unblocked ticket at once (8 by default; a run can ask for more after a cost check), and merges each finished ticket. A merge goes through only when the specialist touched no files outside its ticket, its checks pass, and the plan's full checks pass after the merge; otherwise the merge is undone and the specialist is sent back once. At the end the `reviewer` agent checks the whole branch against the tickets, and `/ship` opens the draft PR.
+- `/crew [feature]` shows every ticket's state.
+
+How the agents stay out of each other's way:
+- Two tickets run at the same time only if their files can't overlap. Shared files (`package.json`, `tsconfig*.json`, `.github/**`, plus the plan's `shared` list) belong to the lead; specialists ask for changes under "Suggestions:".
+- Guardrails reads each worktree's ticket and blocks edits outside it, and `crew merge` checks the diff again, so a shell edit can't slip past.
+- Specialists run in Claude Code's own worktree isolation. crew sets `worktree.baseRef` to `"head"` in `.claude/settings.local.json` so their worktrees start from the run branch.
+
+Things to know:
+- Each worktree is a full checkout and runs an install (`setup:` in the plan; `none` turns it off). pnpm keeps that fast.
+- Worktrees live under `.claude/worktrees/`. If your test or lint config scans every folder, exclude `.claude/`.
+- Parallel width is limited by how independent the tickets are, not only by the cap. Every agent costs a full context.
+- The same CLI works outside Claude Code: `npx github:effinrich/claude-mods crew status <feature>`.
+
 ### Install (Claude Code only)
 
 At the prompt of a terminal session, one line per mod you want:
@@ -187,6 +206,7 @@ At the prompt of a terminal session, one line per mod you want:
 /plugin install context-meter --marketplace effinrich/claude-mods
 /plugin install cli-passthrough --marketplace effinrich/claude-mods
 /plugin install default-skills --marketplace effinrich/claude-mods
+/plugin install crew --marketplace effinrich/claude-mods
 ```
 
 Answer `y` to add the marketplace, then pick the user scope. From a shell, use `claude plugin install <mod> --marketplace effinrich/claude-mods`. In the desktop app, where `/plugin` does not run: click + next to the prompt box, then Plugins, Add marketplace with `effinrich/claude-mods`, then Add plugin.

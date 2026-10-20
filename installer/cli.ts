@@ -4,7 +4,7 @@ export type ModName = 'guardrails' | 'compaction-guard' | 'context-audit' | 'def
 export type Log = (line: string) => void
 
 export const ALL_MODS: readonly ModName[] = ['guardrails', 'compaction-guard', 'context-audit', 'default-skills']
-export const CLAUDE_EXTRAS = ['context-meter', 'cli-passthrough'] as const
+export const CLAUDE_EXTRAS = ['context-meter', 'cli-passthrough', 'crew'] as const
 export const DEFAULT_SKILLS = 'ponytail:ponytail full, feature-based-architecture, default-skills:plain-writing'
 export const MARKETPLACE = 'effinrich/claude-mods'
 

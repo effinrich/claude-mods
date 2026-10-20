@@ -1,11 +1,11 @@
-import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
-import { resolveChecks, summarizeFailures, type CheckRun } from '../core/checks.ts'
 import { diffSnapshots, snapshotFile, type FileSnapshot, type Snapshot } from '../core/drift.ts'
+import { judgeOwnership, MARKER, parseMarker, type Marker } from '../core/crew.ts'
 import { renderHandoff } from '../core/handoff.ts'
+import { runCheckCommands } from './run-checks.ts'
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases } from '../core/imports.ts'
 import { isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from '../core/rules.ts'
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH, type Spec } from '../core/spec.ts'
@@ -23,7 +23,6 @@ import {
 import { ALLOW, type Capabilities, type Config, type HookEvent, type ToolName, type Verdict } from './types.ts'
 
 const MAX_STOP_BLOCKS = 2
-const FAILURE_LINES = 30
 const SPEC_DRAFT_MIN_CHARS = 1500
 const SUGGEST = 'If it needs changing, list it under "Suggestions:" in your reply.'
 
@@ -76,15 +75,30 @@ const missingPackage = (config: Config, absolutePath: string, names: readonly st
   )
 }
 
-export const judgeEdits = (config: Config, root: string, event: Extract<HookEvent, { kind: 'edit' }>): Verdict => {
-  const spec = loadSpec(root)
+// A crew specialist's worktree carries a ticket marker at its root; the ticket, not the spec, decides what it may edit.
+export const findCrewMarker = (absolutePath: string): { root: string; marker: Marker } | undefined => {
+  for (const dir of parentDirs(absolutePath)) {
+    const text = readText(join(dir, MARKER))
+    if (text === undefined) continue
+    const marker = parseMarker(text)
+    return marker === undefined ? undefined : { root: dir, marker }
+  }
+  return undefined
+}
+
+export const judgeEdits = (config: Config, sessionRoot: string, event: Extract<HookEvent, { kind: 'edit' }>): Verdict => {
+  const spec = loadSpec(sessionRoot)
   for (const edit of event.edits) {
+    const crew = findCrewMarker(isAbsolute(edit.path) ? edit.path : join(sessionRoot, edit.path))
+    const root = crew?.root ?? sessionRoot
     const rel = toRelative(root, edit.path)
     if (rel === undefined) continue
     if (isLockfile(rel)) {
       return { kind: 'deny', reason: `guardrails: don't hand-edit ${rel}. Change the manifest and let the package manager regenerate it.` }
     }
-    const verdict = judgeScope(rel, spec)
+    const ownership = crew === undefined ? undefined : judgeOwnership(rel, crew.marker)
+    if (ownership !== undefined) return { kind: 'deny', reason: `guardrails: ${ownership}.` }
+    const verdict = crew === undefined ? judgeScope(rel, spec) : ({ isAllowed: true } as const)
     if (!verdict.isAllowed) return { kind: 'deny', reason: `guardrails: ${verdict.reason}. Don't edit it. ${SUGGEST}` }
     if (!isSourceFile(rel) && !isCoverageConfig(rel)) continue
     const absolute = isAbsolute(edit.path) ? edit.path : join(root, edit.path)
@@ -108,30 +122,7 @@ export const judgeEdits = (config: Config, root: string, event: Extract<HookEven
   return ALLOW
 }
 
-export const runChecks = (config: Config, root: string): string | undefined => {
-  const entries = (() => {
-    try {
-      return readdirSync(root)
-    } catch {
-      return []
-    }
-  })()
-  const commands = resolveChecks(loadSpec(root)?.checks ?? [], readText(join(root, 'package.json')), new Set(entries))
-  const runs: CheckRun[] = commands.map(command => {
-    const [file = '', ...args] = command.argv
-    const ran = spawnSync(file, args, {
-      cwd: root,
-      encoding: 'utf8',
-      timeout: config.checkTimeoutMs,
-      shell: process.platform === 'win32',
-      maxBuffer: 16 * 1024 * 1024,
-    })
-    const exitCode = ran.error !== undefined ? 127 : (ran.status ?? 1)
-    return { label: command.label, exitCode, output: `${ran.stdout ?? ''}\n${ran.stderr ?? ''}${ran.error ? `\n${ran.error.message}` : ''}` }
-  })
-  const failure = summarizeFailures(runs, FAILURE_LINES)
-  return failure === '' ? undefined : failure
-}
+export const runChecks = (config: Config, root: string): string | undefined => runCheckCommands(config, root, loadSpec(root)?.checks ?? [])
 
 const hashFile = (path: string): string => {
   try {
@@ -231,7 +222,8 @@ const decideWithState = async (
     case 'edit': {
       if (!config.mods.guardrails) return ALLOW
       const verdict = judgeEdits(config, root, event)
-      if (verdict.kind === 'allow') {
+      const isCrewOnly = event.edits.every(edit => findCrewMarker(isAbsolute(edit.path) ? edit.path : join(root, edit.path)) !== undefined)
+      if (verdict.kind === 'allow' && !isCrewOnly) {
         state.isDirty = true
         rememberTouched(state, event.edits.map(edit => edit.path))
       }
