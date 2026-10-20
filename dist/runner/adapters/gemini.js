@@ -29,7 +29,7 @@ const parse = (event, payload) => {
         case 'BeforeAgent':
             return { ...base, kind: 'prompt', text: str(payload.prompt) ?? '' };
         case 'AfterAgent':
-            return { ...base, kind: 'stop', isRepeat: payload.stop_hook_active === true };
+            return { ...base, kind: 'stop', isRepeat: payload.stop_hook_active === true, lastMessage: str(payload.prompt_response) };
         case 'PreCompress':
             return { ...base, kind: 'precompact' };
         case 'SessionStart':

@@ -13,7 +13,7 @@ export type HookEvent =
   | (Base & { kind: 'edited'; paths: readonly string[] })
   | (Base & { kind: 'shell'; command: string })
   | (Base & { kind: 'prompt'; text: string })
-  | (Base & { kind: 'stop'; isRepeat: boolean })
+  | (Base & { kind: 'stop'; isRepeat: boolean; lastMessage?: string })
   | (Base & { kind: 'precompact' })
   | (Base & { kind: 'sessionStart'; source: string | undefined })
   | { kind: 'ignore' }

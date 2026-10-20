@@ -31,7 +31,7 @@ ${MANAGED}
 
 const checksSkill = (runtimeMain: string): string => `---
 name: checks
-description: Run the project's spec checks (or typecheck + lint) and report the result. Use when the user says checks or /checks.
+description: Run the project's spec checks (or typecheck + lint + test) and report the result. Use when the user says checks or /checks.
 ---
 ${MANAGED}
 Run \`node "${runtimeMain}" check\` from the project root and report its output. Fix nothing unless asked.

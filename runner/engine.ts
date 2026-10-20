@@ -5,9 +5,9 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { diffSnapshots, snapshotFile, type FileSnapshot, type Snapshot } from '../core/drift.ts'
 import { judgeOwnership, MARKER, parseMarker, type Marker } from '../core/crew.ts'
 import { renderHandoff } from '../core/handoff.ts'
-import { runCheckCommands } from './run-checks.ts'
+import { runCheckCommands, runCheckReport, workTreeFingerprint } from './run-checks.ts'
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases } from '../core/imports.ts'
-import { isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from '../core/rules.ts'
+import { claimedSuccess, isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from '../core/rules.ts'
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH, type Spec } from '../core/spec.ts'
 import {
   handoffPath,
@@ -146,6 +146,59 @@ const recordChecks = (state: SessionState, root: string, failure: string | undef
   state.lastResult = failure === undefined ? 'pass' : 'fail'
   state.isDirty = failure !== undefined
   state.passHashes = failure === undefined ? touchedHashes(state, root) : undefined
+  state.passFp = failure === undefined ? workTreeFingerprint(root) : undefined
+}
+
+// With git, any change since the last pass counts, shell edits included; without it, only the edits the hooks saw.
+const isUnchanged = (state: SessionState, root: string, fingerprint: string | undefined): boolean =>
+  fingerprint === undefined ? isUnchangedSincePass(state, root) : state.lastResult === 'pass' && fingerprint === state.passFp
+
+const runAndRecord = (config: Config, root: string, state: SessionState): { failure: string | undefined; count: number } => {
+  const report = runCheckReport(config, root, loadSpec(root)?.checks ?? [])
+  recordChecks(state, root, report.failure)
+  return { failure: report.failure, count: report.labels.length }
+}
+
+const NO_CHECKS =
+  'guardrails: this repo has no checks to run (no `checks:` in .claude/spec.md and no typecheck, lint or test script), so the end-of-turn gate passes without testing anything.'
+
+const gateStop = (config: Config, root: string, state: SessionState, fingerprint: string | undefined): Verdict => {
+  if (isUnchanged(state, root, fingerprint)) {
+    state.isDirty = false
+    state.stopBlocks = 0
+    return ALLOW
+  }
+  const { failure, count } = runAndRecord(config, root, state)
+  if (failure === undefined) {
+    state.stopBlocks = 0
+    if (count > 0 || state.warnedNoChecks) return ALLOW
+    state.warnedNoChecks = true
+    return { kind: 'notice', text: NO_CHECKS }
+  }
+  if (state.stopBlocks >= MAX_STOP_BLOCKS) {
+    state.stopBlocks = 0
+    log(`checks still fail after ${MAX_STOP_BLOCKS} retries in ${root}`)
+    return { kind: 'notice', text: `guardrails: checks still fail after ${MAX_STOP_BLOCKS} retries; stopping so you can decide.` }
+  }
+  state.stopBlocks += 1
+  return { kind: 'continue', reason: `guardrails: checks fail; fix them before finishing (retry ${state.stopBlocks}/${MAX_STOP_BLOCKS}).\n${failure}` }
+}
+
+// A reply that says tests pass, fixed or verified is held to the checks once per turn; unverified claims get them run now.
+const judgeClaim = (config: Config, root: string, state: SessionState, message: string | undefined, fingerprint: string | undefined): Verdict | undefined => {
+  if (message === undefined || state.claimChecked) return undefined
+  const claim = claimedSuccess(message)
+  if (claim === undefined) return undefined
+  state.claimChecked = true
+  const wasDirty = state.isDirty
+  const failure = isUnchanged(state, root, fingerprint) ? undefined : runAndRecord(config, root, state).failure
+  // The claim gets one send-back; it doesn't arm the edit gate's retries on a turn that changed nothing.
+  state.isDirty = wasDirty
+  if (failure === undefined) return undefined
+  return {
+    kind: 'continue',
+    reason: `guardrails: your reply says "${claim}", but the checks fail. Correct the reply to say what actually passes and what doesn't (or fix it first).\n${failure}`,
+  }
 }
 
 const writeHandoff = (state: SessionState, root: string, now: Date): string => {
@@ -245,40 +298,28 @@ const decideWithState = async (
       if (prose !== undefined) {
         return { kind: 'deny', reason: `guardrails: ${prose}. Reword it plainly (period, comma or parentheses instead of em dashes; plain words) and run it again.` }
       }
-      if (isGitCommit(event.command) && (state.isDirty || state.lastResult !== 'pass')) {
-        if (isUnchangedSincePass(state, root)) {
+      if (isGitCommit(event.command) && (state.isDirty || state.lastResult !== 'pass' || state.passFp !== undefined)) {
+        if (isUnchanged(state, root, workTreeFingerprint(root))) {
           state.isDirty = false
           return ALLOW
         }
-        const failure = runChecks(config, root)
-        recordChecks(state, root, failure)
+        const { failure } = runAndRecord(config, root, state)
         if (failure !== undefined) return { kind: 'deny', reason: `guardrails: commit blocked, checks fail:\n${failure}` }
       }
       return ALLOW
     }
     case 'stop': {
-      if (!config.mods.guardrails || !config.stopGate || !state.isDirty) return ALLOW
-      if (isUnchangedSincePass(state, root)) {
-        state.isDirty = false
-        state.stopBlocks = 0
-        return ALLOW
-      }
-      const failure = runChecks(config, root)
-      recordChecks(state, root, failure)
-      if (failure === undefined) {
-        state.stopBlocks = 0
-        return ALLOW
-      }
-      if (state.stopBlocks >= MAX_STOP_BLOCKS) {
-        state.stopBlocks = 0
-        log(`checks still fail after ${MAX_STOP_BLOCKS} retries in ${root}`)
-        return { kind: 'notice', text: `guardrails: checks still fail after ${MAX_STOP_BLOCKS} retries; stopping so you can decide.` }
-      }
-      state.stopBlocks += 1
-      return { kind: 'continue', reason: `guardrails: checks fail; fix them before finishing (retry ${state.stopBlocks}/${MAX_STOP_BLOCKS}).\n${failure}` }
+      if (!config.mods.guardrails || !config.stopGate) return ALLOW
+      const fingerprint = workTreeFingerprint(root)
+      const isChanged = state.isDirty || (fingerprint !== undefined && state.turnStartFp !== undefined && fingerprint !== state.turnStartFp)
+      const gate = isChanged ? gateStop(config, root, state, fingerprint) : ALLOW
+      if (gate.kind === 'continue') return gate
+      return judgeClaim(config, root, state, event.lastMessage, fingerprint) ?? gate
     }
     case 'prompt': {
       rememberPrompt(state, event.text)
+      state.claimChecked = false
+      if (config.mods.guardrails && config.stopGate) state.turnStartFp = workTreeFingerprint(root)
       if (config.mods.guardrails && config.draftSpecs && event.text.length >= SPEC_DRAFT_MIN_CHARS && !existsSync(join(root, SPEC_PATH))) {
         mkdirSync(join(root, '.claude'), { recursive: true })
         writeFileSync(join(root, SPEC_PATH), draftSpec(event.text))

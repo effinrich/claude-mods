@@ -252,7 +252,7 @@ const claim = (cwd: string, feature: string, id: string, out: Out): number => {
   }
   out(`claimed ${id} in ${worktree} (branch ${branch})`)
   out(`you may edit only: ${ticket.owns.join(', ')}`)
-  out(`checks: ${ticket.checks.join(' && ') || 'typecheck + lint'}`)
+  out(`checks: ${ticket.checks.join(' && ') || 'typecheck + lint + test'}`)
   out('')
   out(ticket.body)
   return 0

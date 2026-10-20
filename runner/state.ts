@@ -10,6 +10,11 @@ export type SessionState = {
   lastResult: 'pass' | 'fail' | undefined
   // Content hashes of the touched files when checks last passed; equal hashes mean the checks need not run again.
   passHashes: Record<string, string> | undefined
+  // Working-tree fingerprints (git): at the start of the turn, and when checks last passed.
+  turnStartFp: string | undefined
+  passFp: string | undefined
+  claimChecked: boolean
+  warnedNoChecks: boolean
   stopBlocks: number
   originalTask: string | undefined
   prompts: string[]
@@ -27,6 +32,10 @@ const emptyState = (): SessionState => ({
   isDirty: false,
   lastResult: undefined,
   passHashes: undefined,
+  turnStartFp: undefined,
+  passFp: undefined,
+  claimChecked: false,
+  warnedNoChecks: false,
   stopBlocks: 0,
   originalTask: undefined,
   prompts: [],

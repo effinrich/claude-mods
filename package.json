@@ -1,6 +1,6 @@
 {
   "name": "claude-mods",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Guardrails, compaction handoffs and drift checks for Claude Code, Codex CLI, Gemini CLI, Cursor and Copilot CLI.",
   "type": "module",
   "license": "MIT",

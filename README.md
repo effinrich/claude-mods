@@ -39,7 +39,7 @@ Needs Node 20 or newer. MIT licensed.
 | `/ship` and `/checks` | skills (`$ship`) | `/ship` command | skills | skills |
 | Default skills (ponytail, plain-writing) always on | ✓ AGENTS.md | ✓ GEMINI.md | ◐ skill copied; add the rule in Cursor Settings → Rules, or per repo with `project` | ✓ copilot-instructions.md |
 
-The end-of-turn gate and the commit gate skip the check run when none of the files edited this session changed since the checks last passed.
+In a git repo the gates see every change to the working tree, including edits made through the shell, and skip the check run when nothing changed since the checks last passed. With no `checks:` in the spec they run the `typecheck`, `lint` and `test` scripts, with `CI=true` so test runners don't start in watch mode. A repo with none of those gets a one-time notice instead of a silent pass. A reply that claims success ("tests pass", "all green", "fixed", "verified") is checked once per turn: if the checks fail, the agent is sent back to correct the reply. Codex and Gemini CLI pass the reply to their hooks; Cursor and Copilot don't, so they skip that part.
 
 Not ported: context-meter (these tools have no custom status line command) and cli-passthrough (it is specific to Claude Code's own CLI). The context-percentage hold is also missing, because none of these tools tell hooks how full the context is, and so is the research-first hold, because their hooks don't see reads and searches. They get the matching instruction line instead.
 
@@ -111,7 +111,7 @@ Enforcement by blocking, not by instructions in a markdown file.
 ---
 scope: [src/features/auth/**, tests/auth/**]   # where Claude may edit; empty means anywhere
 forbid: [package.json, "**/*.snap"]            # never edit these
-checks: [pnpm typecheck, pnpm test auth]       # must pass; empty means typecheck + lint scripts
+checks: [pnpm typecheck, pnpm test auth]       # must pass; empty means typecheck + lint + test scripts
 ---
 Add OAuth login. Acceptance: ...
 ```
@@ -128,8 +128,10 @@ A prompt over 1500 characters with no spec yet is saved there as a draft for you
 - Hand edits to lockfiles.
 - `git commit`, `git tag` and `gh pr`/`gh issue` text with an em dash or a stock phrase (delve, seamless, leverage, robust, comprehensive, "it's worth noting", "I hope this helps"). Claude rewords it and runs the command again. The list is short so it rarely fires on real text.
 - `--no-verify`, `git commit -n`, `git push --force` (lease is fine), `git reset --hard`, `git checkout -- .`, `git clean -f`, `rm -rf ~` or `/`. You can still run these yourself with `!`.
-- Finishing a turn that edited code while checks fail. Claude is sent back up to 2 times, then stops and reports.
+- Finishing a turn that changed files while checks fail. In a git repo any change counts, shell edits included. Claude is sent back up to 2 times, then stops and reports.
+- Finishing with a reply that says tests pass, all green, fixed or verified while the checks fail. Claude is sent back once to correct it. Checks that never ran are run first.
 - `git commit` while checks fail.
+- With no `checks:` in the spec, the checks are the `typecheck`, `lint` and `test` scripts (npm init's placeholder test script is ignored). A repo with none of them gets a one-time notice.
 
 **What it holds back once**
 

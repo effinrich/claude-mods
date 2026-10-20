@@ -129,10 +129,10 @@ describe('rules', () => {
 })
 
 describe('checks', () => {
-  test('uses spec checks first, else typecheck and lint scripts with the repo package manager', () => {
+  test('uses spec checks first, else typecheck, lint and test scripts with the repo package manager', () => {
     expect(resolveChecks(['pnpm test core'], undefined, new Set())).toEqual([{ label: 'pnpm test core', argv: ['pnpm', 'test', 'core'] }])
     const packageJson = JSON.stringify({ scripts: { typecheck: 'tsc', lint: 'eslint .', test: 'vitest' } })
-    expect(resolveChecks([], packageJson, new Set(['pnpm-lock.yaml'])).map(c => c.label)).toEqual(['pnpm run typecheck', 'pnpm run lint'])
+    expect(resolveChecks([], packageJson, new Set(['pnpm-lock.yaml'])).map(c => c.label)).toEqual(['pnpm run typecheck', 'pnpm run lint', 'pnpm run test'])
     expect(packageManager(new Set(['bun.lock']))).toBe('bun')
   })
 })

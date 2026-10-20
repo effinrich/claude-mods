@@ -1,7 +1,7 @@
 import type { EngineInterface, PluginOptions, Register } from 'claude-code'
-import { resolveChecks, summarizeFailures, type CheckRun } from './checks.ts'
+import { CHECK_ENV, composeFingerprint, resolveChecks, summarizeFailures, untrackedPaths, type CheckRun } from './checks.ts'
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases, unresearchedPackages } from './imports.ts'
-import { isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from './rules.ts'
+import { claimedSuccess, isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from './rules.ts'
 import { judgeOwnership, MARKER, parseMarker, type Marker } from './crew.ts'
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH, type Spec } from './spec.ts'
 
@@ -25,6 +25,11 @@ type GuardState = {
   // Inputs of the session's non-edit tool calls (reads, searches, fetches), for the research-first hold.
   lookups: string[]
   heldWrites: Set<string>
+  // Working-tree fingerprints (git): at the start of the turn, and when checks last passed.
+  turnStartFp: string | undefined
+  passFp: string | undefined
+  claimChecked: boolean
+  warnedNoChecks: boolean
 }
 
 const MAX_STOP_BLOCKS = 2
@@ -63,6 +68,10 @@ const state: GuardState = {
   heldPrompt: undefined,
   lookups: [],
   heldWrites: new Set(),
+  turnStartFp: undefined,
+  passFp: undefined,
+  claimChecked: false,
+  warnedNoChecks: false,
 }
 
 const readConfig = (options: PluginOptions): Config => ({
@@ -223,7 +232,29 @@ const holdForResearch = (config: Config, path: string, content: string): string 
   )
 }
 
-const runChecks = async ($: EngineInterface, config: Config): Promise<string | undefined> => {
+type CheckOutcome = { failure: string | undefined; count: number }
+
+// Changes to the working tree from any source, shell edits included. Undefined outside git or when the output was cut.
+const fingerprint = async ($: EngineInterface): Promise<string | undefined> => {
+  const root = await $.session.root()
+  const git = (args: readonly string[], stdin?: string) =>
+    $.process.run(['git', ...args], { cwd: root, timeoutMs: 15_000, ...(stdin === undefined ? {} : { stdin }) }).catch(() => undefined)
+  if ((await git(['rev-parse', '--is-inside-work-tree']))?.exitCode !== 0) return undefined
+  const [tree, diff, others] = await Promise.all([
+    git(['rev-parse', 'HEAD^{tree}']),
+    git(['diff', 'HEAD', '--no-color', '--no-ext-diff']),
+    git(['ls-files', '--others', '--exclude-standard', '-z']),
+  ])
+  if (diff?.isStdoutTruncated === true || others?.isStdoutTruncated === true) return undefined
+  const untracked = untrackedPaths(others?.exitCode === 0 ? others.stdout : '')
+  const blobs = untracked.length === 0 ? undefined : await git(['hash-object', '--stdin-paths'], untracked.join('\n'))
+  return composeFingerprint(tree?.exitCode === 0 ? tree.stdout : '', diff?.exitCode === 0 ? diff.stdout : '', untracked, blobs?.stdout ?? '')
+}
+
+const isUnchanged = (current: string | undefined): boolean =>
+  current !== undefined && state.lastResult === 'pass' && current === state.passFp
+
+const runChecks = async ($: EngineInterface, config: Config): Promise<CheckOutcome> => {
   const root = await $.session.root()
   const [spec, packageJson, entries] = await Promise.all([
     loadSpec($, root),
@@ -240,7 +271,7 @@ const runChecks = async ($: EngineInterface, config: Config): Promise<string | u
   for (const command of commands) {
     $.ui.status(`guard · running ${command.label}`)
     const ran = await $.process
-      .run(command.argv, { cwd: root, timeoutMs: config.checkTimeoutMs })
+      .run(command.argv, { cwd: root, timeoutMs: config.checkTimeoutMs, env: { ...CHECK_ENV } })
       .catch((error: unknown) => ({ exitCode: 127, stdout: '', stderr: String(error) }))
     runs.push({ label: command.label, exitCode: ran.exitCode, output: `${ran.stdout}\n${ran.stderr}` })
   }
@@ -248,12 +279,38 @@ const runChecks = async ($: EngineInterface, config: Config): Promise<string | u
   const failure = summarizeFailures(runs, FAILURE_LINES)
   state.lastResult = failure === '' ? 'pass' : 'fail'
   state.isDirty = failure !== ''
+  state.passFp = failure === '' ? await fingerprint($) : undefined
   showStatus($, spec)
-  return failure === '' ? undefined : failure
+  return { failure: failure === '' ? undefined : failure, count: commands.length }
 }
 
-const runChecksIfNeeded = async ($: EngineInterface, config: Config): Promise<string | undefined> =>
-  !state.isDirty && state.lastResult === 'pass' ? undefined : runChecks($, config)
+const runChecksIfNeeded = async ($: EngineInterface, config: Config): Promise<string | undefined> => {
+  if (!state.isDirty && state.lastResult === 'pass' && state.passFp === undefined) return undefined
+  if (isUnchanged(await fingerprint($))) {
+    state.isDirty = false
+    return undefined
+  }
+  return (await runChecks($, config)).failure
+}
+
+const NO_CHECKS =
+  'guardrails: this repo has no checks to run (no `checks:` in .claude/spec.md and no typecheck, lint or test script), so the end-of-turn gate passes without testing anything.'
+
+// A reply that says tests pass, fixed or verified is held to the checks once per turn; unverified claims get them run now.
+const judgeClaim = async ($: EngineInterface, config: Config, message: string | undefined, current: string | undefined): Promise<string | undefined> => {
+  if (message === undefined || state.claimChecked) return undefined
+  const claim = claimedSuccess(message)
+  if (claim === undefined) return undefined
+  state.claimChecked = true
+  if (isUnchanged(current)) return undefined
+  const wasDirty = state.isDirty
+  const { failure } = await runChecks($, config)
+  // The claim gets one send-back; it doesn't arm the edit gate's retries on a turn that changed nothing.
+  state.isDirty = wasDirty
+  return failure === undefined
+    ? undefined
+    : `guardrails: your reply says "${claim}", but the checks fail. Correct the reply to say what actually passes and what doesn't (or fix it first).\n${failure}`
+}
 
 const holdNewTask = async ($: EngineInterface, config: Config, text: string): Promise<string | undefined> => {
   if (text.length < NEW_TASK_MIN_CHARS) return undefined
@@ -285,7 +342,7 @@ const guardStatusText = async ($: EngineInterface): Promise<string> => {
     state.isOff ? 'OFF for this session' : 'on',
     spec === undefined
       ? `no ${SPEC_PATH}: scope unrestricted`
-      : `scope: ${spec.scope.join(', ') || 'anywhere'} · forbid: ${spec.forbid.join(', ') || 'none'} · checks: ${spec.checks.join(', ') || 'typecheck + lint'}`,
+      : `scope: ${spec.scope.join(', ') || 'anywhere'} · forbid: ${spec.forbid.join(', ') || 'none'} · checks: ${spec.checks.join(', ') || 'typecheck + lint + test'}`,
     `checks: ${state.lastResult ?? 'not run'}${state.isDirty ? ' (edits since)' : ''}`,
   ]
   return lines.join('\n')
@@ -298,7 +355,7 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     await Promise.all([
       $.command.register({ name: 'guard', description: 'Guardrails: status, or `on` / `off` for this session.', argumentHint: '[on|off]' }),
-      $.command.register({ name: 'checks', description: 'Run the spec checks (or typecheck + lint) now.' }),
+      $.command.register({ name: 'checks', description: 'Run the spec checks (or typecheck + lint + test) now.' }),
       $.command.register({ name: 'ship', description: 'Run checks; if they pass, commit, push and open a draft PR.' }),
     ])
     showStatus($, await loadSpec($, e.cwd))
@@ -363,19 +420,30 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'guardrails: the command check failed, so the command is held.' }))
 
   on('classic.Stop', async ($, e, next) => {
-    if (state.isOff || !config.stopGate || !state.isDirty) return next(e)
-    const failure = await runChecks($, config)
-    if (failure === undefined) {
+    if (state.isOff || !config.stopGate) return next(e)
+    const current = await fingerprint($)
+    const isChanged = state.isDirty || (current !== undefined && state.turnStartFp !== undefined && current !== state.turnStartFp)
+    if (isChanged && isUnchanged(current)) {
+      state.isDirty = false
       state.stopBlocks = 0
-      return next(e)
+    } else if (isChanged) {
+      const { failure, count } = await runChecks($, config)
+      if (failure === undefined) {
+        state.stopBlocks = 0
+        if (count === 0 && !state.warnedNoChecks) {
+          state.warnedNoChecks = true
+          $.ui.log(NO_CHECKS)
+        }
+      } else if (state.stopBlocks >= MAX_STOP_BLOCKS) {
+        state.stopBlocks = 0
+        $.ui.log(`guardrails: checks still fail after ${MAX_STOP_BLOCKS} retries; stopping so you can decide.\n${failure}`)
+      } else {
+        state.stopBlocks += 1
+        return { block: `guardrails: checks fail; fix them before finishing (retry ${state.stopBlocks}/${MAX_STOP_BLOCKS}).\n${failure}` }
+      }
     }
-    if (state.stopBlocks >= MAX_STOP_BLOCKS) {
-      state.stopBlocks = 0
-      $.ui.log(`guardrails: checks still fail after ${MAX_STOP_BLOCKS} retries; stopping so you can decide.\n${failure}`)
-      return next(e)
-    }
-    state.stopBlocks += 1
-    return { block: `guardrails: checks fail; fix them before finishing (retry ${state.stopBlocks}/${MAX_STOP_BLOCKS}).\n${failure}` }
+    const claim = await judgeClaim($, config, e.last_assistant_message, current)
+    return claim === undefined ? next(e) : { block: claim }
   }).catch(($, e, next) => next(e))
 
   on('prompt.submit', async ($, e, next) => {
@@ -383,6 +451,8 @@ export const register: Register = (on, options) => {
     const hold = await holdNewTask($, config, e.text)
     if (hold !== undefined) return { drop: hold }
     if (config.draftSpecs) await saveSpecDraft($, e.text)
+    state.claimChecked = false
+    if (config.stopGate) state.turnStartFp = await fingerprint($)
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -395,12 +465,12 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'checks' }, async $ => {
-    const failure = await runChecks($, config)
+    const { failure } = await runChecks($, config)
     return { text: failure === undefined ? '✓ checks pass' : `checks fail\n${failure}` }
   })
 
   on('command.run', { command: 'ship' }, async $ => {
-    const failure = await runChecks($, config)
+    const { failure } = await runChecks($, config)
     if (failure !== undefined) return { text: `not shipping, checks fail\n${failure}` }
     // A command cannot start a turn while it holds this one; the timer submits once it has returned.
     $.clock.after(SHIP_DELAY_MS, () => {

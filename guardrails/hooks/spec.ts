@@ -87,7 +87,7 @@ export const draftSpec = (prompt: string): string =>
     'scope: []',
     '# Paths Claude must not edit.',
     'forbid: []',
-    '# Commands that must pass before finishing or committing. Empty means typecheck + lint from package.json.',
+    '# Commands that must pass before finishing or committing. Empty means the typecheck, lint and test scripts from package.json.',
     'checks: []',
     '---',
     '',

@@ -12,6 +12,7 @@ type World = {
   toasts: string[]
   setExit: (label: string, exitCode: number) => void
   setPercent: (percent: number) => void
+  setTree: (diff: string | undefined) => void
 }
 
 const world = (on: On, initial: Record<string, string> = {}): World => {
@@ -24,6 +25,13 @@ const world = (on: On, initial: Record<string, string> = {}): World => {
   let percent = 20
 
   const clock = mock.clock(on, { now: 1_000_000 })
+  // Not a git repo unless a test sets a working tree; then the fingerprint follows `tree`.
+  let tree: string | undefined
+  const git = (args: readonly string[]) => {
+    const isRepo = tree !== undefined
+    const stdout = args[0] === 'diff' ? (tree ?? '') : args[0] === 'rev-parse' && args[1] === 'HEAD^{tree}' ? 'abc' : ''
+    return { value: { exitCode: isRepo ? 0 : 128, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+  }
   on('session.root', () => ({ value: ROOT }))
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
@@ -43,6 +51,7 @@ const world = (on: On, initial: Record<string, string> = {}): World => {
       .map(path => ({ name: path.slice(ROOT.length + 1), kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false })),
   }))
   on('process.run', ($, e) => {
+    if (e.argv[0] === 'git') return git(e.argv.slice(1))
     const label = e.argv.join(' ')
     runs.push(label)
     const exitCode = exits.get(label) ?? 0
@@ -78,6 +87,9 @@ const world = (on: On, initial: Record<string, string> = {}): World => {
     },
     setPercent: next => {
       percent = next
+    },
+    setTree: diff => {
+      tree = diff
     },
   }
 }
@@ -239,4 +251,27 @@ test('inside a crew worktree, the ticket decides what may be edited and the stop
 
   await $.classic.Stop({})
   expect(runs).toEqual([])
+})
+
+test('checks a turn whose files changed through the shell, and holds an untrue success claim once', async ($, on) => {
+  const { runs, setExit, setTree } = world(on, BASE)
+  setTree('')
+  await prompt($, 'Rename the helper.')
+  setTree('diff --git a/src/a.ts b/src/a.ts')
+  setExit('pnpm run lint', 1)
+
+  const sentBack = await $.classic.Stop({})
+  expect(sentBack.block).toContain('checks fail')
+  expect(runs).toEqual(['pnpm run typecheck', 'pnpm run lint'])
+})
+
+test('holds a reply that says tests pass when the checks fail, once per turn', async ($, on) => {
+  const { setExit } = world(on, BASE)
+  setExit('pnpm run lint', 1)
+  await prompt($, 'Is the build green?')
+
+  const held = await $.classic.Stop({ last_assistant_message: 'Yes, all green.' })
+  expect(held.block).toContain('your reply says "all green", but the checks fail')
+  const again = await $.classic.Stop({ last_assistant_message: 'Yes, all green.' })
+  expect(again.block).toBeUndefined()
 })

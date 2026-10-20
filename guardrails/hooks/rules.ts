@@ -112,3 +112,15 @@ export const judgeProse = (command: string): string | undefined => {
   const hits = SLOP.filter(rule => rule.pattern.test(command)).map(rule => rule.label)
   return hits.length === 0 ? undefined : `the message uses ${hits.join(', ')}`
 }
+
+const CLAIM = /\b((all\s+)?(tests?|checks?|specs?|the\s+suite)\s+(now\s+)?(pass(es|ed|ing)?|are\s+(passing|green)|succeed(ed|s)?)|all\s+green|build\s+(passes|succeeds)|everything\s+(passes|works)|verified|fixed)\b/i
+const NEGATED = /(\bnot|n['\u2019]t|\bnever|\bno|\bunable\s+to|\bcould\s+not|\bwithout)\s+(\w+\s+){0,2}$/i
+
+// The first success claim in a reply that isn't negated just before it ("not verified", "couldn't get tests to pass").
+export const claimedSuccess = (text: string): string | undefined => {
+  const pattern = new RegExp(CLAIM.source, 'gi')
+  for (const match of text.matchAll(pattern)) {
+    if (!NEGATED.test(text.slice(Math.max(0, (match.index ?? 0) - 40), match.index))) return match[0]
+  }
+  return undefined
+}
