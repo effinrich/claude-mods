@@ -157,3 +157,12 @@ test('doctor shows block counts per rule and the tokens pinned into every turn',
   assert.ok(lines.some(line => /pinned per turn: ~\d+ tokens \(ponytail:ponytail full ~2500, feature-based-architecture not found, default-skills:plain-writing ~\d+, guardrails rule ~110\)/.test(line)), lines.join('\n'))
   assert.ok(lines.some(line => line.includes('WARNING: over ~2000 tokens')))
 })
+
+test('update follows the skills in the user profile over the ones stored at install', () => {
+  install()
+  assert.match(read('.codex/AGENTS.md'), /the `ponytail` skill/)
+  put('.claude-mods/profile.json', JSON.stringify({ skills: ['default-skills:plain-writing'] }))
+  assert.equal(run(['update'], home, line => lines.push(line)), 0)
+  assert.doesNotMatch(read('.codex/AGENTS.md'), /the `ponytail` skill/)
+  assert.match(read('.codex/AGENTS.md'), /the `plain-writing` skill/)
+})

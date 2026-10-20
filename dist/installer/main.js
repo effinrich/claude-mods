@@ -71,7 +71,7 @@ const install = (args, home, log, isUpdate) => {
     const choices = {
         tools: parseList(flag(args, 'tools'), ['claude', ...TOOLS]) ?? (isUpdate ? stored?.tools : undefined) ?? detected,
         mods: parseList(flag(args, 'mods'), ALL_MODS) ?? (isUpdate ? stored?.mods : undefined) ?? [...ALL_MODS],
-        skills: flag(args, 'skills') ?? (isUpdate ? stored?.skills : undefined) ?? loadProfile().skills ?? DEFAULT_SKILLS,
+        skills: flag(args, 'skills') ?? loadProfile().skills ?? (isUpdate ? stored?.skills : undefined) ?? DEFAULT_SKILLS,
     };
     const isDryRun = args.includes('--dry-run');
     if (choices.tools.length === 0) {
