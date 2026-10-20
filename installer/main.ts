@@ -123,7 +123,7 @@ const install = (args: readonly string[], home: string, log: (line: string) => v
   if (choices.tools.includes('gemini')) log('  gemini: Gemini CLI shows the new hooks once; confirm them (/hooks panel lists them).')
   if (choices.tools.includes('cursor')) log('  cursor: restart Cursor so it reloads ~/.cursor/hooks.json.')
   if (choices.tools.includes('copilot')) log('  copilot: start a new Copilot CLI session to load ~/.copilot/hooks/claude-mods.json.')
-  log('  Run `npx github:effinrich/claude-mods doctor` to check everything is wired.')
+  log('  Run `npx --allow-git=all github:effinrich/claude-mods doctor` to check everything is wired.')
   return 0
 }
 
@@ -191,7 +191,7 @@ const doctor = (home: string, log: (line: string) => void): number => {
   }
   for (const node of missingNodePaths(home)) {
     log(`  WARNING: the hooks run Node from ${node}, which no longer exists (a Node upgrade via nvm or similar?).`)
-    log('           Run `npx github:effinrich/claude-mods update` to point them at your current Node.')
+    log('           Run `npx --allow-git=all github:effinrich/claude-mods update` to point them at your current Node.')
   }
   const profilePath = join(modsHome(), USER_PROFILE_FILE)
   log(`  profile: ${existsSync(profilePath) ? profilePath : `none (optional: ${profilePath}; a repo's .claude/claude-mods.json overrides it)`}`)
@@ -212,7 +212,7 @@ const doctor = (home: string, log: (line: string) => void): number => {
   return 0
 }
 
-const USAGE = `usage: npx github:${MARKETPLACE} <command> [options]
+const USAGE = `usage: npx --allow-git=all github:${MARKETPLACE} <command> [options]
 
 commands:
   install     wire the mods into each detected tool (default)

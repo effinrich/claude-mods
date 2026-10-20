@@ -5,14 +5,16 @@ Guardrails, compaction handoffs, drift checks and default skills for **Claude Co
 ## One-command install (every tool)
 
 ```
-npx github:effinrich/claude-mods
+npx --allow-git=all github:effinrich/claude-mods
 ```
+
+`--allow-git=all` is needed from npm 12 on, which refuses to fetch packages from git by default (`EALLOWGIT`); older npm ignores it.
 
 It detects which of the five tools you have and wires each one up. Claude Code gets its plugins from this repo's marketplace. The others get command hooks that call a small Node runtime copied to `~/.claude-mods/runtime/<version>/`. Before editing any config file you own, it writes a `.claude-mods-backup-<time>` copy next to it.
 
 | Command | Does |
 |---|---|
-| `npx github:effinrich/claude-mods install` | install (the default command) |
+| `npx --allow-git=all github:effinrich/claude-mods install` | install (the default command) |
 | `… update` | reinstall with your last choices, after a new version lands |
 | `… uninstall` | remove only what it added (hook entries, `/ship` and `/checks`, copied skills, the marked instruction block) |
 | `… doctor` | what is installed where, a stale Node path in the hooks, tokens pinned into every turn, blocks per rule over the last 7 days, payload capture status, recent hook errors |
@@ -79,7 +81,7 @@ Skills and gate settings live in one file that every part reads: the Claude Code
 Run this inside a repo (any folder in it; the files go at the git root):
 
 ```
-npx github:effinrich/claude-mods project [--mods ...] [--skills ...] [--dry-run] [--remove]
+npx --allow-git=all github:effinrich/claude-mods project [--mods ...] [--skills ...] [--dry-run] [--remove]
 ```
 
 | File | What claude-mods writes |
@@ -106,8 +108,8 @@ Turn capture off again afterwards. The log rolls over at 2 MB.
 
 ## New users and teams
 
-1. **Each person, once per machine**: install Node 20 or newer, then run `npx github:effinrich/claude-mods`. Hooks and skills live in each user's own config, so nobody can install them for someone else.
-2. **Each shared repo, once**: run `npx github:effinrich/claude-mods project` and commit `.cursor/rules/claude-mods.mdc`, `AGENTS.md` and `.claude/settings.json`. Claude Code then offers the claude-mods plugins to everyone who opens the repo.
+1. **Each person, once per machine**: install Node 20 or newer, then run `npx --allow-git=all github:effinrich/claude-mods`. Hooks and skills live in each user's own config, so nobody can install them for someone else.
+2. **Each shared repo, once**: run `npx --allow-git=all github:effinrich/claude-mods project` and commit `.cursor/rules/claude-mods.mdc`, `AGENTS.md` and `.claude/settings.json`. Claude Code then offers the claude-mods plugins to everyone who opens the repo.
 3. **Default skills**: `plain-writing` ships with claude-mods, so everyone gets it. `ponytail` and `feature-based-architecture` are not part of this repo; each person's install copies them from their own Claude Code installs into `~/.agents/skills/`. Anyone who lacks a skill just skips it; nothing breaks.
 4. **First-run approvals**, per person and tool:
    - Claude Code: when you open the repo, accept the claude-mods marketplace and the plugins it lists.
@@ -155,7 +157,7 @@ A prompt over 1500 characters with no spec yet is saved there as a draft for you
 - At the end of a turn, everything the turn changed is checked against where it started, whatever made the change: a deleted test file, or a `.skip`, `@ts-ignore`, removed assertion or lowered threshold added through the shell, sends Claude back once to restore it or explain. A moved test isn't counted as deleted, and changes that were already there before the turn aren't blamed on it.
 - With no `checks:` in the spec, the checks are the `typecheck`, `lint` and `test` scripts (npm init's placeholder test script is ignored). A repo with none of them gets a one-time notice. The end-of-turn gate runs only changed tests for a bare `vitest` or `jest` script; commits and `/ship` run everything.
 
-Every block, hold and send-back is logged to `~/.claude-mods/blocks.log` (shared with the other tools). `npx github:effinrich/claude-mods doctor` counts them per rule for the last 7 days, so you can see which rules earn their keep.
+Every block, hold and send-back is logged to `~/.claude-mods/blocks.log` (shared with the other tools). `npx --allow-git=all github:effinrich/claude-mods doctor` counts them per rule for the last 7 days, so you can see which rules earn their keep.
 
 **What it holds back once**
 
@@ -219,7 +221,7 @@ Things to know:
 - Each worktree is a full checkout and runs an install (`setup:` in the plan; `none` turns it off). pnpm keeps that fast.
 - Worktrees live under `.claude/worktrees/`. If your test or lint config scans every folder, exclude `.claude/`.
 - Parallel width is limited by how independent the tickets are, not only by the cap. Every agent costs a full context.
-- The same CLI works outside Claude Code: `npx github:effinrich/claude-mods crew status <feature>`.
+- The same CLI works outside Claude Code: `npx --allow-git=all github:effinrich/claude-mods crew status <feature>`.
 
 ### Install (Claude Code only)
 
