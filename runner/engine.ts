@@ -5,12 +5,14 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { diffSnapshots, snapshotFile, type FileSnapshot, type Snapshot } from '../core/drift.ts'
 import { judgeOwnership, MARKER, parseMarker, type Marker } from '../core/crew.ts'
 import { renderHandoff } from '../core/handoff.ts'
+import { isChangedOnly, type CheckMode } from '../core/checks.ts'
 import { runCheckCommands, runCheckReport, workTreeFingerprint } from './run-checks.ts'
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases } from '../core/imports.ts'
 import { claimedSuccess, isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from '../core/rules.ts'
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH, type Spec } from '../core/spec.ts'
 import {
   handoffPath,
+  logBlock,
   loadState,
   log,
   modsHome,
@@ -150,12 +152,14 @@ const recordChecks = (state: SessionState, root: string, failure: string | undef
 }
 
 // With git, any change since the last pass counts, shell edits included; without it, only the edits the hooks saw.
-const isUnchanged = (state: SessionState, root: string, fingerprint: string | undefined): boolean =>
-  fingerprint === undefined ? isUnchangedSincePass(state, root) : state.lastResult === 'pass' && fingerprint === state.passFp
+const isUnchanged = (state: SessionState, root: string, fingerprint: string | undefined, needsFull = false): boolean =>
+  (!needsFull || state.lastPassFull) &&
+  (fingerprint === undefined ? isUnchangedSincePass(state, root) : state.lastResult === 'pass' && fingerprint === state.passFp)
 
-const runAndRecord = (config: Config, root: string, state: SessionState): { failure: string | undefined; count: number } => {
-  const report = runCheckReport(config, root, loadSpec(root)?.checks ?? [])
+const runAndRecord = (config: Config, root: string, state: SessionState, mode: CheckMode): { failure: string | undefined; count: number } => {
+  const report = runCheckReport(config, root, loadSpec(root)?.checks ?? [], mode)
   recordChecks(state, root, report.failure)
+  state.lastPassFull = report.failure === undefined && (mode === 'full' || !report.labels.some(isChangedOnly))
   return { failure: report.failure, count: report.labels.length }
 }
 
@@ -168,7 +172,7 @@ const gateStop = (config: Config, root: string, state: SessionState, fingerprint
     state.stopBlocks = 0
     return ALLOW
   }
-  const { failure, count } = runAndRecord(config, root, state)
+  const { failure, count } = runAndRecord(config, root, state, 'turn')
   if (failure === undefined) {
     state.stopBlocks = 0
     if (count > 0 || state.warnedNoChecks) return ALLOW
@@ -191,7 +195,7 @@ const judgeClaim = (config: Config, root: string, state: SessionState, message: 
   if (claim === undefined) return undefined
   state.claimChecked = true
   const wasDirty = state.isDirty
-  const failure = isUnchanged(state, root, fingerprint) ? undefined : runAndRecord(config, root, state).failure
+  const failure = isUnchanged(state, root, fingerprint) ? undefined : runAndRecord(config, root, state, 'turn').failure
   // The claim gets one send-back; it doesn't arm the edit gate's retries on a turn that changed nothing.
   state.isDirty = wasDirty
   if (failure === undefined) return undefined
@@ -256,7 +260,10 @@ export const decide = async (
   const root = projectRoot(event.cwd)
   const state = loadState(tool, event.sessionId)
   try {
-    return await decideWithState(tool, capabilities, config, event, root, state, now)
+    const verdict = await decideWithState(tool, capabilities, config, event, root, state, now)
+    if (verdict.kind === 'deny' || verdict.kind === 'continue') logBlock(tool, verdict.reason, now)
+    if (verdict.kind === 'notice' && verdict.text.startsWith('guardrails:')) logBlock(tool, verdict.text, now)
+    return verdict
   } finally {
     saveState(tool, event.sessionId, state)
   }
@@ -299,11 +306,11 @@ const decideWithState = async (
         return { kind: 'deny', reason: `guardrails: ${prose}. Reword it plainly (period, comma or parentheses instead of em dashes; plain words) and run it again.` }
       }
       if (isGitCommit(event.command) && (state.isDirty || state.lastResult !== 'pass' || state.passFp !== undefined)) {
-        if (isUnchanged(state, root, workTreeFingerprint(root))) {
+        if (isUnchanged(state, root, workTreeFingerprint(root), true)) {
           state.isDirty = false
           return ALLOW
         }
-        const { failure } = runAndRecord(config, root, state)
+        const { failure } = runAndRecord(config, root, state, 'full')
         if (failure !== undefined) return { kind: 'deny', reason: `guardrails: commit blocked, checks fail:\n${failure}` }
       }
       return ALLOW

@@ -109,3 +109,47 @@ export const claimedSuccess = (text) => {
     }
     return undefined;
 };
+// Which rule produced a block, for the block log; matched on the wording each rule uses.
+const RULE_NAMES = [
+    [/outside the scope|forbidden by/, 'scope'],
+    [/not owned by ticket|only the crew lead edits/, 'crew-ownership'],
+    [/hand-edit/, 'lockfile'],
+    [/removes assertions/, 'removed-assertions'],
+    [/coverage threshold/, 'coverage'],
+    [/mocks one of your own modules/, 'own-module-mock'],
+    [/skips|silences|adds an `any`/, 'weakening'],
+    [/not installed or declared/, 'made-up-package'],
+    [/rewrites snapshots/, 'snapshot-update'],
+    [/the message uses/, 'writing'],
+    [/commit blocked/, 'commit-gate'],
+    [/still fail after/, 'stop-gate-gave-up'],
+    [/checks fail; fix them/, 'stop-gate'],
+    [/your reply says/, 'claim'],
+    [/has not looked up yet/, 'research-hold'],
+    [/no checks to run/, 'no-checks'],
+    [/context is at/, 'context-hold'],
+    [/blocked `/, 'command'],
+];
+export const ruleOf = (reason) => RULE_NAMES.find(([pattern]) => pattern.test(reason))?.[1] ?? 'other';
+export const blockEntry = (tool, reason, now) => ({
+    at: now.toISOString(),
+    tool,
+    rule: ruleOf(reason),
+    reason: reason.replace(/^guardrails: /, '').split('\n')[0]?.slice(0, 200) ?? '',
+});
+// Counts per rule over the entries newer than `since`, most frequent first.
+export const summarizeBlocks = (logText, since) => {
+    const counts = new Map();
+    for (const line of logText.split('\n')) {
+        try {
+            const entry = JSON.parse(line);
+            if (typeof entry.rule !== 'string' || typeof entry.at !== 'string' || new Date(entry.at) < since)
+                continue;
+            counts.set(entry.rule, (counts.get(entry.rule) ?? 0) + 1);
+        }
+        catch {
+            // A torn line from two hooks writing at once is skipped.
+        }
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+};

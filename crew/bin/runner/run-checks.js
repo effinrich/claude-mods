@@ -14,7 +14,7 @@ const readText = (path) => {
 // The given commands, or typecheck + lint + test from package.json when there are none. Undefined means everything passed.
 export const runCheckCommands = (config, root, checks) => runCheckReport(config, root, checks).failure;
 export const ranTests = (report) => report.labels.some(isTestCommand);
-export const runCheckReport = (config, root, checks) => {
+export const runCheckReport = (config, root, checks, mode = 'full') => {
     const entries = (() => {
         try {
             return readdirSync(root);
@@ -23,7 +23,7 @@ export const runCheckReport = (config, root, checks) => {
             return [];
         }
     })();
-    const commands = resolveChecks(checks, readText(join(root, 'package.json')), new Set(entries));
+    const commands = resolveChecks(checks, readText(join(root, 'package.json')), new Set(entries), mode);
     const runs = commands.map(command => {
         const [file = '', ...args] = command.argv;
         const ran = spawnSync(file, args, {

@@ -275,3 +275,16 @@ test('holds a reply that says tests pass when the checks fail, once per turn', a
   const again = await $.classic.Stop({ last_assistant_message: 'Yes, all green.' })
   expect(again.block).toBeUndefined()
 })
+
+test('runs only changed tests at the end of a turn and records the block for doctor', async ($, on) => {
+  const vitest = JSON.stringify({ name: 'app', scripts: { typecheck: 'tsc', test: 'vitest' }, dependencies: { react: '19.0.0' } })
+  const { runs, files } = world(on, { ...BASE, [`${ROOT}/package.json`]: vitest })
+  on('env.get', ($, e) => ({ value: e.name === 'HOME' ? '/home/dev' : undefined }))
+
+  await edit($, `${ROOT}/src/a.ts`, 'export const a = 1')
+  await $.classic.Stop({})
+  expect(runs).toEqual(['pnpm run typecheck', 'pnpm exec vitest run --changed'])
+
+  await $.tool.call({ tool: 'Bash', command: 'git push --force' })
+  expect(files.get('/home/dev/.claude-mods/blocks.log')).toContain('"rule":"command"')
+})

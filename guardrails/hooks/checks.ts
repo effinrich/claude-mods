@@ -18,28 +18,54 @@ export const packageManager = (files: ReadonlySet<string>): string => {
 // npm init's placeholder test script always fails, so it doesn't count as a check.
 const isPlaceholder = (command: unknown): boolean => typeof command === 'string' && /no test specified/.test(command)
 
-const scriptNames = (packageJson: string | undefined): Set<string> => {
-  if (packageJson === undefined) return new Set()
+const readScripts = (packageJson: string | undefined): Record<string, string> => {
+  if (packageJson === undefined) return {}
   try {
     const scripts = (JSON.parse(packageJson) as { scripts?: Record<string, unknown> }).scripts ?? {}
-    return new Set(Object.keys(scripts).filter(name => !isPlaceholder(scripts[name])))
+    return Object.fromEntries(
+      Object.entries(scripts).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && !isPlaceholder(entry[1])),
+    )
   } catch {
-    return new Set()
+    return {}
   }
 }
+
+// `turn`: the end-of-turn gate, where a plain vitest or jest script runs only the tests related to changed files.
+// `full`: commits and merges, which run the whole test script.
+export type CheckMode = 'turn' | 'full'
+
+const EXEC: Readonly<Record<string, readonly string[]>> = {
+  npm: ['npx', '--no-install'],
+  pnpm: ['pnpm', 'exec'],
+  yarn: ['yarn'],
+  bun: ['bunx'],
+}
+
+// Only scripts that are the bare runner; anything with its own flags or wrappers runs as written.
+const changedOnly = (script: string): readonly string[] | undefined => {
+  const trimmed = script.trim()
+  if (/^vitest(\s+run)?$/.test(trimmed)) return ['vitest', 'run', '--changed']
+  if (trimmed === 'jest') return ['jest', '--onlyChanged']
+  return undefined
+}
+
+// A check that ran only the tests related to changed files; a commit still needs the full suite after it.
+export const isChangedOnly = (label: string): boolean => /--changed\b|--onlyChanged\b/.test(label)
 
 export const resolveChecks = (
   specChecks: readonly string[],
   packageJson: string | undefined,
   rootFiles: ReadonlySet<string>,
+  mode: CheckMode = 'full',
 ): CheckCommand[] => {
   if (specChecks.length > 0) return specChecks.map(command => ({ label: command, argv: tokenize(command) }))
-  const scripts = scriptNames(packageJson)
+  const scripts = readScripts(packageJson)
   const manager = packageManager(rootFiles)
-  return DEFAULT_SCRIPTS.filter(name => scripts.has(name)).map(name => ({
-    label: `${manager} run ${name}`,
-    argv: [manager, 'run', name],
-  }))
+  return DEFAULT_SCRIPTS.filter(name => scripts[name] !== undefined).map(name => {
+    const runner = mode === 'turn' && name === 'test' ? changedOnly(scripts[name] ?? '') : undefined
+    if (runner !== undefined) return { label: runner.join(' '), argv: [...(EXEC[manager] ?? EXEC.npm ?? []), ...runner] }
+    return { label: `${manager} run ${name}`, argv: [manager, 'run', name] }
+  })
 }
 
 export const summarizeFailures = (runs: readonly CheckRun[], lines: number): string =>

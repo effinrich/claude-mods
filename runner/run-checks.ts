@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { CHECK_ENV, composeFingerprint, isTestCommand, resolveChecks, summarizeFailures, untrackedPaths, type CheckRun } from '../core/checks.ts'
+import { CHECK_ENV, composeFingerprint, isTestCommand, resolveChecks, summarizeFailures, untrackedPaths, type CheckMode, type CheckRun } from '../core/checks.ts'
 import type { Config } from './types.ts'
 
 const FAILURE_LINES = 30
@@ -22,7 +22,7 @@ export const runCheckCommands = (config: Pick<Config, 'checkTimeoutMs'>, root: s
 
 export const ranTests = (report: CheckReport): boolean => report.labels.some(isTestCommand)
 
-export const runCheckReport = (config: Pick<Config, 'checkTimeoutMs'>, root: string, checks: readonly string[]): CheckReport => {
+export const runCheckReport = (config: Pick<Config, 'checkTimeoutMs'>, root: string, checks: readonly string[], mode: CheckMode = 'full'): CheckReport => {
   const entries = (() => {
     try {
       return readdirSync(root)
@@ -30,7 +30,7 @@ export const runCheckReport = (config: Pick<Config, 'checkTimeoutMs'>, root: str
       return []
     }
   })()
-  const commands = resolveChecks(checks, readText(join(root, 'package.json')), new Set(entries))
+  const commands = resolveChecks(checks, readText(join(root, 'package.json')), new Set(entries), mode)
   const runs: CheckRun[] = commands.map(command => {
     const [file = '', ...args] = command.argv
     const ran = spawnSync(file, args, {

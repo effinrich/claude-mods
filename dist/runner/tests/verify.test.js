@@ -91,3 +91,33 @@ test('finds success claims but not negated ones', () => {
     assert.equal(claimedSuccess('The tests did not pass'), undefined);
     assert.equal(claimedSuccess('Here is the plan for the login page.'), undefined);
 });
+test('the end-of-turn run uses changed-only tests for a bare vitest or jest script; commits run the full suite', () => {
+    const resolve = (test, mode, lock = 'pnpm-lock.yaml') => resolveChecks([], JSON.stringify({ scripts: { test } }), new Set([lock]), mode).map(check => check.argv.join(' '));
+    assert.deepEqual(resolve('vitest', 'turn'), ['pnpm exec vitest run --changed']);
+    assert.deepEqual(resolve('vitest run', 'turn', 'package-lock.json'), ['npx --no-install vitest run --changed']);
+    assert.deepEqual(resolve('jest', 'turn', 'yarn.lock'), ['yarn jest --onlyChanged']);
+    assert.deepEqual(resolve('vitest --coverage', 'turn'), ['pnpm run test']);
+    assert.deepEqual(resolve('vitest', 'full'), ['pnpm run test']);
+});
+test('a full pass at the end of a turn lets the commit through without running again', async () => {
+    scripts({ test: `node -e "require('fs').appendFileSync('runs.txt','x')"` });
+    put('.gitignore', 'runs.txt\n');
+    git('add', '.');
+    git('commit', '-qm', 'counting');
+    await prompt();
+    put('src/a.ts', 'export const a = 5\n');
+    assert.equal((await stop()).kind, 'allow');
+    assert.equal((await run({ ...base(), kind: 'shell', command: 'git commit -am "five"' })).kind, 'allow');
+    assert.equal(execFileSync('cat', [join(root, 'runs.txt')], { encoding: 'utf8' }).length, 1);
+});
+test('logs every block with its rule for doctor', async () => {
+    await run({ ...base(), kind: 'shell', command: 'git reset --hard' });
+    await prompt();
+    await stop('All tests pass.');
+    const entries = execFileSync('cat', [join(process.env.CLAUDE_MODS_HOME ?? '', 'blocks.log')], { encoding: 'utf8' })
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line));
+    assert.deepEqual(entries.map(entry => entry.rule), ['command', 'claim']);
+    assert.equal(entries[0]?.tool, 'codex');
+});

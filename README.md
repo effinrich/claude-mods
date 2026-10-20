@@ -15,7 +15,7 @@ It detects which of the five tools you have and wires each one up. Claude Code g
 | `npx github:effinrich/claude-mods install` | install (the default command) |
 | `… update` | reinstall with your last choices, after a new version lands |
 | `… uninstall` | remove only what it added (hook entries, `/ship` and `/checks`, copied skills, the marked instruction block) |
-| `… doctor` | what is installed where, a stale Node path in the hooks, payload capture status, recent hook errors |
+| `… doctor` | what is installed where, a stale Node path in the hooks, tokens pinned into every turn, blocks per rule over the last 7 days, payload capture status, recent hook errors |
 | `… project` | add shared claude-mods files to the repo you are in; `--remove` takes them out (see below) |
 
 Options: `--tools claude,codex,gemini,cursor,copilot` (default: detected), `--mods guardrails,compaction-guard,context-audit,default-skills` (default: all), `--skills "ponytail:ponytail full"`, `--dry-run`.
@@ -39,7 +39,7 @@ Needs Node 20 or newer. MIT licensed.
 | `/ship` and `/checks` | skills (`$ship`) | `/ship` command | skills | skills |
 | Default skills (ponytail, plain-writing) always on | ✓ AGENTS.md | ✓ GEMINI.md | ◐ skill copied; add the rule in Cursor Settings → Rules, or per repo with `project` | ✓ copilot-instructions.md |
 
-In a git repo the gates see every change to the working tree, including edits made through the shell, and skip the check run when nothing changed since the checks last passed. With no `checks:` in the spec they run the `typecheck`, `lint` and `test` scripts, with `CI=true` so test runners don't start in watch mode. A repo with none of those gets a one-time notice instead of a silent pass. A reply that claims success ("tests pass", "all green", "fixed", "verified") is checked once per turn: if the checks fail, the agent is sent back to correct the reply. Codex and Gemini CLI pass the reply to their hooks; Cursor and Copilot don't, so they skip that part.
+In a git repo the gates see every change to the working tree, including edits made through the shell, and skip the check run when nothing changed since the checks last passed. With no `checks:` in the spec they run the `typecheck`, `lint` and `test` scripts, with `CI=true` so test runners don't start in watch mode. At the end of a turn, a `test` script that is just `vitest`, `vitest run` or `jest` runs only the tests related to changed files (`vitest run --changed`, `jest --onlyChanged`); commits run the whole suite. A repo with none of those gets a one-time notice instead of a silent pass. A reply that claims success ("tests pass", "all green", "fixed", "verified") is checked once per turn: if the checks fail, the agent is sent back to correct the reply. Codex and Gemini CLI pass the reply to their hooks; Cursor and Copilot don't, so they skip that part.
 
 Not ported: context-meter (these tools have no custom status line command) and cli-passthrough (it is specific to Claude Code's own CLI). The context-percentage hold is also missing, because none of these tools tell hooks how full the context is, and so is the research-first hold, because their hooks don't see reads and searches. They get the matching instruction line instead.
 
@@ -131,7 +131,9 @@ A prompt over 1500 characters with no spec yet is saved there as a draft for you
 - Finishing a turn that changed files while checks fail. In a git repo any change counts, shell edits included. Claude is sent back up to 2 times, then stops and reports.
 - Finishing with a reply that says tests pass, all green, fixed or verified while the checks fail. Claude is sent back once to correct it. Checks that never ran are run first.
 - `git commit` while checks fail.
-- With no `checks:` in the spec, the checks are the `typecheck`, `lint` and `test` scripts (npm init's placeholder test script is ignored). A repo with none of them gets a one-time notice.
+- With no `checks:` in the spec, the checks are the `typecheck`, `lint` and `test` scripts (npm init's placeholder test script is ignored). A repo with none of them gets a one-time notice. The end-of-turn gate runs only changed tests for a bare `vitest` or `jest` script; commits and `/ship` run everything.
+
+Every block, hold and send-back is logged to `~/.claude-mods/blocks.log` (shared with the other tools). `npx github:effinrich/claude-mods doctor` counts them per rule for the last 7 days, so you can see which rules earn their keep.
 
 **What it holds back once**
 
@@ -153,7 +155,7 @@ Pins skills into the system prompt of every session, as if you had run them at t
 
 - Default: `ponytail:ponytail full, feature-based-architecture, default-skills:plain-writing`. Change the list in `/config` (comma-separated, `plugin:skill args`).
 - `plain-writing` (about 400 tokens per turn) covers anything a person reads: lead with the answer, plain words, no em dashes or formula (not-X-but-Y, groups of three), length that fits, and no "done" or "tests pass" without having run them. Drop it from the list to turn it off.
-- `/default-skills` shows what is pinned, from where, and roughly how many tokens it adds per turn.
+- `/default-skills` shows what is pinned, from where, and roughly how many tokens it adds per turn. Over ~2,000 tokens in total it warns at session start; `doctor` reports the same total for every tool.
 - Each pinned skill is sent with every turn (cached with the system prompt), and is cut at 16,000 characters.
 - Skills that run shell commands while they expand (`!` lines) are pinned as written, not run.
 

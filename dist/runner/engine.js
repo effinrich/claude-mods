@@ -5,11 +5,12 @@ import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { diffSnapshots, snapshotFile } from "../core/drift.js";
 import { judgeOwnership, MARKER, parseMarker } from "../core/crew.js";
 import { renderHandoff } from "../core/handoff.js";
+import { isChangedOnly } from "../core/checks.js";
 import { runCheckCommands, runCheckReport, workTreeFingerprint } from "./run-checks.js";
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases } from "../core/imports.js";
 import { claimedSuccess, isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from "../core/rules.js";
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH } from "../core/spec.js";
-import { handoffPath, loadState, log, modsHome, rememberPrompt, rememberTouched, saveState, writeJson, } from "./state.js";
+import { handoffPath, logBlock, loadState, log, modsHome, rememberPrompt, rememberTouched, saveState, writeJson, } from "./state.js";
 import { ALLOW } from "./types.js";
 const MAX_STOP_BLOCKS = 2;
 const SPEC_DRAFT_MIN_CHARS = 1500;
@@ -137,10 +138,12 @@ const recordChecks = (state, root, failure) => {
     state.passFp = failure === undefined ? workTreeFingerprint(root) : undefined;
 };
 // With git, any change since the last pass counts, shell edits included; without it, only the edits the hooks saw.
-const isUnchanged = (state, root, fingerprint) => fingerprint === undefined ? isUnchangedSincePass(state, root) : state.lastResult === 'pass' && fingerprint === state.passFp;
-const runAndRecord = (config, root, state) => {
-    const report = runCheckReport(config, root, loadSpec(root)?.checks ?? []);
+const isUnchanged = (state, root, fingerprint, needsFull = false) => (!needsFull || state.lastPassFull) &&
+    (fingerprint === undefined ? isUnchangedSincePass(state, root) : state.lastResult === 'pass' && fingerprint === state.passFp);
+const runAndRecord = (config, root, state, mode) => {
+    const report = runCheckReport(config, root, loadSpec(root)?.checks ?? [], mode);
     recordChecks(state, root, report.failure);
+    state.lastPassFull = report.failure === undefined && (mode === 'full' || !report.labels.some(isChangedOnly));
     return { failure: report.failure, count: report.labels.length };
 };
 const NO_CHECKS = 'guardrails: this repo has no checks to run (no `checks:` in .claude/spec.md and no typecheck, lint or test script), so the end-of-turn gate passes without testing anything.';
@@ -150,7 +153,7 @@ const gateStop = (config, root, state, fingerprint) => {
         state.stopBlocks = 0;
         return ALLOW;
     }
-    const { failure, count } = runAndRecord(config, root, state);
+    const { failure, count } = runAndRecord(config, root, state, 'turn');
     if (failure === undefined) {
         state.stopBlocks = 0;
         if (count > 0 || state.warnedNoChecks)
@@ -175,7 +178,7 @@ const judgeClaim = (config, root, state, message, fingerprint) => {
         return undefined;
     state.claimChecked = true;
     const wasDirty = state.isDirty;
-    const failure = isUnchanged(state, root, fingerprint) ? undefined : runAndRecord(config, root, state).failure;
+    const failure = isUnchanged(state, root, fingerprint) ? undefined : runAndRecord(config, root, state, 'turn').failure;
     // The claim gets one send-back; it doesn't arm the edit gate's retries on a turn that changed nothing.
     state.isDirty = wasDirty;
     if (failure === undefined)
@@ -231,7 +234,12 @@ export const decide = async (tool, capabilities, config, event, now) => {
     const root = projectRoot(event.cwd);
     const state = loadState(tool, event.sessionId);
     try {
-        return await decideWithState(tool, capabilities, config, event, root, state, now);
+        const verdict = await decideWithState(tool, capabilities, config, event, root, state, now);
+        if (verdict.kind === 'deny' || verdict.kind === 'continue')
+            logBlock(tool, verdict.reason, now);
+        if (verdict.kind === 'notice' && verdict.text.startsWith('guardrails:'))
+            logBlock(tool, verdict.text, now);
+        return verdict;
     }
     finally {
         saveState(tool, event.sessionId, state);
@@ -269,11 +277,11 @@ const decideWithState = async (tool, capabilities, config, event, root, state, n
                 return { kind: 'deny', reason: `guardrails: ${prose}. Reword it plainly (period, comma or parentheses instead of em dashes; plain words) and run it again.` };
             }
             if (isGitCommit(event.command) && (state.isDirty || state.lastResult !== 'pass' || state.passFp !== undefined)) {
-                if (isUnchanged(state, root, workTreeFingerprint(root))) {
+                if (isUnchanged(state, root, workTreeFingerprint(root), true)) {
                     state.isDirty = false;
                     return ALLOW;
                 }
-                const { failure } = runAndRecord(config, root, state);
+                const { failure } = runAndRecord(config, root, state, 'full');
                 if (failure !== undefined)
                     return { kind: 'deny', reason: `guardrails: commit blocked, checks fail:\n${failure}` };
             }

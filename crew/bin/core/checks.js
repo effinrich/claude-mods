@@ -11,26 +11,45 @@ export const packageManager = (files) => {
 };
 // npm init's placeholder test script always fails, so it doesn't count as a check.
 const isPlaceholder = (command) => typeof command === 'string' && /no test specified/.test(command);
-const scriptNames = (packageJson) => {
+const readScripts = (packageJson) => {
     if (packageJson === undefined)
-        return new Set();
+        return {};
     try {
         const scripts = JSON.parse(packageJson).scripts ?? {};
-        return new Set(Object.keys(scripts).filter(name => !isPlaceholder(scripts[name])));
+        return Object.fromEntries(Object.entries(scripts).filter((entry) => typeof entry[1] === 'string' && !isPlaceholder(entry[1])));
     }
     catch {
-        return new Set();
+        return {};
     }
 };
-export const resolveChecks = (specChecks, packageJson, rootFiles) => {
+const EXEC = {
+    npm: ['npx', '--no-install'],
+    pnpm: ['pnpm', 'exec'],
+    yarn: ['yarn'],
+    bun: ['bunx'],
+};
+// Only scripts that are the bare runner; anything with its own flags or wrappers runs as written.
+const changedOnly = (script) => {
+    const trimmed = script.trim();
+    if (/^vitest(\s+run)?$/.test(trimmed))
+        return ['vitest', 'run', '--changed'];
+    if (trimmed === 'jest')
+        return ['jest', '--onlyChanged'];
+    return undefined;
+};
+// A check that ran only the tests related to changed files; a commit still needs the full suite after it.
+export const isChangedOnly = (label) => /--changed\b|--onlyChanged\b/.test(label);
+export const resolveChecks = (specChecks, packageJson, rootFiles, mode = 'full') => {
     if (specChecks.length > 0)
         return specChecks.map(command => ({ label: command, argv: tokenize(command) }));
-    const scripts = scriptNames(packageJson);
+    const scripts = readScripts(packageJson);
     const manager = packageManager(rootFiles);
-    return DEFAULT_SCRIPTS.filter(name => scripts.has(name)).map(name => ({
-        label: `${manager} run ${name}`,
-        argv: [manager, 'run', name],
-    }));
+    return DEFAULT_SCRIPTS.filter(name => scripts[name] !== undefined).map(name => {
+        const runner = mode === 'turn' && name === 'test' ? changedOnly(scripts[name] ?? '') : undefined;
+        if (runner !== undefined)
+            return { label: runner.join(' '), argv: [...(EXEC[manager] ?? EXEC.npm ?? []), ...runner] };
+        return { label: `${manager} run ${name}`, argv: [manager, 'run', name] };
+    });
 };
 export const summarizeFailures = (runs, lines) => runs
     .filter(run => run.exitCode !== 0)

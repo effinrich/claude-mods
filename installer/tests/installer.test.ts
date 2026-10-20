@@ -139,3 +139,18 @@ test('copies the bundled plain-writing skill to every tool without a Claude Code
   assert.ok(existsSync(join(home, '.cursor/skills/plain-writing/SKILL.md')))
   assert.match(read('.codex/AGENTS.md'), /the `plain-writing` skill/)
 })
+
+test('doctor shows block counts per rule and the tokens pinned into every turn', () => {
+  install()
+  put('.claude-mods/blocks.log', [
+    JSON.stringify({ at: new Date().toISOString(), tool: 'codex', rule: 'writing', reason: 'x' }),
+    JSON.stringify({ at: new Date().toISOString(), tool: 'codex', rule: 'writing', reason: 'y' }),
+    JSON.stringify({ at: '2020-01-01T00:00:00.000Z', tool: 'codex', rule: 'scope', reason: 'old' }),
+  ].join('\n'))
+  put('.claude/plugins/cache/ponytail/ponytail/4.10.0/skills/ponytail/SKILL.md', `---\nname: ponytail\n---\n${'word '.repeat(2000)}`)
+  lines = []
+  run(['doctor'], home, line => lines.push(line))
+  assert.ok(lines.some(line => line.includes('blocks in the last 7 days: writing 2')), lines.join('\n'))
+  assert.ok(lines.some(line => /pinned per turn: ~\d+ tokens \(ponytail:ponytail full ~2500, feature-based-architecture not found, default-skills:plain-writing ~\d+, guardrails rule ~110\)/.test(line)), lines.join('\n'))
+  assert.ok(lines.some(line => line.includes('WARNING: over ~2000 tokens')))
+})

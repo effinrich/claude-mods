@@ -4,13 +4,15 @@ import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDebugOn, payloadLogPath } from "../runner/debug.js";
-import { loadConfig, modsHome } from "../runner/state.js";
+import { blockLogPath, loadConfig, modsHome } from "../runner/state.js";
+import { clipSkill, parseSkillList, renderSkill, skillLabel } from "../core/skills.js";
+import { summarizeBlocks } from "../core/rules.js";
 import { DEFAULT_CONFIG, TOOLS } from "../runner/types.js";
 import { ALL_MODS, backupStamp, CLAUDE_EXTRAS, DEFAULT_SKILLS, describePlan, flag, MARKETPLACE, parseList } from "./cli.js";
 import { Plan, readJsonObject } from "./files.js";
 import { runCrew } from "../runner/crew.js";
 import { runProject } from "./project.js";
-import { instructionLines, planCommands, planDefaultSkills, planInstructions } from "./skills.js";
+import { findClaudeSkill, instructionLines, planCommands, planDefaultSkills, planInstructions } from "./skills.js";
 import { configDir, countOurHooks, hookConfigPath, hookNodePaths, planHooks } from "./tools.js";
 const BINARIES = {
     claude: ['claude'],
@@ -129,6 +131,33 @@ const uninstall = (args, home, log) => {
     return 0;
 };
 const missingNodePaths = (home) => [...new Set(TOOLS.flatMap(tool => hookNodePaths(home, tool)))].filter(node => !existsSync(node));
+const PINNED_TOKEN_WARNING = 2000;
+const GUARDRAILS_RULE_TOKENS = 110;
+const BLOCK_WINDOW_DAYS = 7;
+// What the default skills and the guardrails rule add to every turn, from the skill files this machine has.
+const reportPinnedTokens = (home, choices, log) => {
+    const mods = choices?.mods ?? [...ALL_MODS];
+    const refs = mods.includes('default-skills') ? parseSkillList(choices?.skills ?? DEFAULT_SKILLS) : [];
+    const parts = refs.map(ref => {
+        const dir = findClaudeSkill(home, ref);
+        const text = dir === undefined ? undefined : readFileSync(join(dir, 'SKILL.md'), 'utf8');
+        return [skillLabel(ref), text === undefined ? undefined : Math.round(clipSkill(renderSkill(text, ref, dir ?? '', undefined)).text.length / 4)];
+    });
+    if (mods.includes('guardrails'))
+        parts.push(['guardrails rule', GUARDRAILS_RULE_TOKENS]);
+    const total = parts.reduce((sum, [, tokens]) => sum + (tokens ?? 0), 0);
+    log(`  pinned per turn: ~${total} tokens (${parts.map(([name, tokens]) => `${name} ${tokens === undefined ? 'not found' : `~${tokens}`}`).join(', ') || 'nothing'})`);
+    if (total > PINNED_TOKEN_WARNING)
+        log(`  WARNING: over ~${PINNED_TOKEN_WARNING} tokens ride along with every turn. Drop or shorten a default skill (--skills).`);
+};
+const reportBlocks = (log) => {
+    const since = new Date(Date.now() - BLOCK_WINDOW_DAYS * 24 * 60 * 60_000);
+    const text = existsSync(blockLogPath()) ? readFileSync(blockLogPath(), 'utf8') : '';
+    const counts = summarizeBlocks(text, since);
+    log(`  blocks in the last ${BLOCK_WINDOW_DAYS} days: ${counts.length === 0 ? 'none' : counts.map(([rule, count]) => `${rule} ${count}`).join(', ')}`);
+    if (counts.length > 0)
+        log(`    details: ${blockLogPath()}`);
+};
 const doctor = (home, log) => {
     const choices = loadChoices();
     log(`claude-mods ${version} · node ${process.version}`);
@@ -145,6 +174,8 @@ const doctor = (home, log) => {
         log(`  WARNING: the hooks run Node from ${node}, which no longer exists (a Node upgrade via nvm or similar?).`);
         log('           Run `npx github:effinrich/claude-mods update` to point them at your current Node.');
     }
+    reportPinnedTokens(home, choices, log);
+    reportBlocks(log);
     const config = loadConfig();
     log(isDebugOn(config)
         ? `  payload capture: on, writing to ${payloadLogPath()}`

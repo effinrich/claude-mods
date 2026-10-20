@@ -1,7 +1,7 @@
 import type { EngineInterface, PluginOptions, Register } from 'claude-code'
-import { CHECK_ENV, composeFingerprint, resolveChecks, summarizeFailures, untrackedPaths, type CheckRun } from './checks.ts'
+import { CHECK_ENV, composeFingerprint, isChangedOnly, resolveChecks, summarizeFailures, untrackedPaths, type CheckMode, type CheckRun } from './checks.ts'
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases, unresearchedPackages } from './imports.ts'
-import { claimedSuccess, isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from './rules.ts'
+import { blockEntry, claimedSuccess, isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from './rules.ts'
 import { judgeOwnership, MARKER, parseMarker, type Marker } from './crew.ts'
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH, type Spec } from './spec.ts'
 
@@ -28,6 +28,8 @@ type GuardState = {
   // Working-tree fingerprints (git): at the start of the turn, and when checks last passed.
   turnStartFp: string | undefined
   passFp: string | undefined
+  // Whether the last passing run was the full suite (commits need that) or the end-of-turn subset.
+  lastPassFull: boolean
   claimChecked: boolean
   warnedNoChecks: boolean
 }
@@ -70,6 +72,7 @@ const state: GuardState = {
   heldWrites: new Set(),
   turnStartFp: undefined,
   passFp: undefined,
+  lastPassFull: false,
   claimChecked: false,
   warnedNoChecks: false,
 }
@@ -251,10 +254,32 @@ const fingerprint = async ($: EngineInterface): Promise<string | undefined> => {
   return composeFingerprint(tree?.exitCode === 0 ? tree.stdout : '', diff?.exitCode === 0 ? diff.stdout : '', untracked, blobs?.stdout ?? '')
 }
 
-const isUnchanged = (current: string | undefined): boolean =>
-  current !== undefined && state.lastResult === 'pass' && current === state.passFp
+const isUnchanged = (current: string | undefined, needsFull = false): boolean =>
+  (!needsFull || state.lastPassFull) && current !== undefined && state.lastResult === 'pass' && current === state.passFp
 
-const runChecks = async ($: EngineInterface, config: Config): Promise<CheckOutcome> => {
+const MAX_BLOCK_LINES = 2000
+
+// Shared with the other tools' runtime, so `doctor` counts every block, hold and send-back in one place.
+const recordBlock = async ($: EngineInterface, tool: string, reason: string): Promise<void> => {
+  try {
+    const [modsHome, home, now] = await Promise.all([$.env.get('CLAUDE_MODS_HOME'), $.env.get('HOME'), $.clock.now()])
+    const dir = modsHome ?? (home === undefined ? undefined : `${home}/.claude-mods`)
+    if (dir === undefined) return
+    const path = `${dir}/blocks.log`
+    const current = await $.fs.read(path).catch(() => '')
+    const lines = (typeof current === 'string' ? current : '').split('\n').filter(line => line !== '').slice(-MAX_BLOCK_LINES)
+    await $.fs.write(path, `${[...lines, JSON.stringify(blockEntry(tool, reason, new Date(now)))].join('\n')}\n`)
+  } catch {
+    // Logging must never break a hook.
+  }
+}
+
+const denied = async ($: EngineInterface, tool: string, deny: string): Promise<{ deny: string }> => {
+  await recordBlock($, tool, deny)
+  return { deny }
+}
+
+const runChecks = async ($: EngineInterface, config: Config, mode: CheckMode): Promise<CheckOutcome> => {
   const root = await $.session.root()
   const [spec, packageJson, entries] = await Promise.all([
     loadSpec($, root),
@@ -265,6 +290,7 @@ const runChecks = async ($: EngineInterface, config: Config): Promise<CheckOutco
     spec?.checks ?? [],
     typeof packageJson === 'string' ? packageJson : undefined,
     new Set(entries.map(entry => entry.name)),
+    mode,
   )
 
   const runs: CheckRun[] = []
@@ -280,17 +306,18 @@ const runChecks = async ($: EngineInterface, config: Config): Promise<CheckOutco
   state.lastResult = failure === '' ? 'pass' : 'fail'
   state.isDirty = failure !== ''
   state.passFp = failure === '' ? await fingerprint($) : undefined
+  state.lastPassFull = failure === '' && (mode === 'full' || !commands.some(command => isChangedOnly(command.label)))
   showStatus($, spec)
   return { failure: failure === '' ? undefined : failure, count: commands.length }
 }
 
 const runChecksIfNeeded = async ($: EngineInterface, config: Config): Promise<string | undefined> => {
   if (!state.isDirty && state.lastResult === 'pass' && state.passFp === undefined) return undefined
-  if (isUnchanged(await fingerprint($))) {
+  if (isUnchanged(await fingerprint($), true)) {
     state.isDirty = false
     return undefined
   }
-  return (await runChecks($, config)).failure
+  return (await runChecks($, config, 'full')).failure
 }
 
 const NO_CHECKS =
@@ -304,7 +331,7 @@ const judgeClaim = async ($: EngineInterface, config: Config, message: string | 
   state.claimChecked = true
   if (isUnchanged(current)) return undefined
   const wasDirty = state.isDirty
-  const { failure } = await runChecks($, config)
+  const { failure } = await runChecks($, config, 'turn')
   // The claim gets one send-back; it doesn't arm the edit gate's retries on a turn that changed nothing.
   state.isDirty = wasDirty
   return failure === undefined
@@ -376,7 +403,7 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => {
     if (state.isOff) return next(e)
     const deny = await judgeEdit($, config, e.file_path, e.new_string, e.old_string)
-    if (deny !== undefined) return { deny }
+    if (deny !== undefined) return denied($, 'Edit', deny)
     const result = await next(e)
     if (result.deny === undefined && result.isError !== true && !(await isInCrewWorktree($, e.file_path))) state.isDirty = true
     return result
@@ -389,7 +416,7 @@ export const register: Register = (on, options) => {
     const deny =
       (await judgeEdit($, config, e.file_path, e.content, typeof existing === 'string' ? existing : '')) ??
       (isNew ? holdForResearch(config, e.file_path, e.content) : undefined)
-    if (deny !== undefined) return { deny }
+    if (deny !== undefined) return denied($, 'Write', deny)
     const result = await next(e)
     if (result.deny === undefined && result.isError !== true && !(await isInCrewWorktree($, e.file_path))) state.isDirty = true
     return result
@@ -398,7 +425,7 @@ export const register: Register = (on, options) => {
   on('tool.call', { tool: 'NotebookEdit' }, async ($, e, next) => {
     if (state.isOff) return next(e)
     const deny = await judgeEdit($, config, e.notebook_path, e.new_source, '')
-    if (deny !== undefined) return { deny }
+    if (deny !== undefined) return denied($, 'NotebookEdit', deny)
     const result = await next(e)
     if (result.deny === undefined && result.isError !== true) state.isDirty = true
     return result
@@ -408,13 +435,13 @@ export const register: Register = (on, options) => {
     if (state.isOff) return next(e)
     const reason = judgeCommand(e.command)
     if (reason !== undefined) {
-      return { deny: `guardrails: blocked \`${clip(e.command)}\`: ${reason}. If the user wants it, they can run it with !.` }
+      return denied($, 'Bash', `guardrails: blocked \`${clip(e.command)}\`: ${reason}. If the user wants it, they can run it with !.`)
     }
     const prose = config.writingGate ? judgeProse(e.command) : undefined
-    if (prose !== undefined) return { deny: `guardrails: ${prose}. ${REWORD}` }
+    if (prose !== undefined) return denied($, 'Bash', `guardrails: ${prose}. ${REWORD}`)
     if (isGitCommit(e.command)) {
       const failure = await runChecksIfNeeded($, config)
-      if (failure !== undefined) return { deny: `guardrails: commit blocked, checks fail:\n${failure}` }
+      if (failure !== undefined) return denied($, 'Bash', `guardrails: commit blocked, checks fail:\n${failure}`)
     }
     return next(e)
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'guardrails: the command check failed, so the command is held.' }))
@@ -427,29 +454,39 @@ export const register: Register = (on, options) => {
       state.isDirty = false
       state.stopBlocks = 0
     } else if (isChanged) {
-      const { failure, count } = await runChecks($, config)
+      const { failure, count } = await runChecks($, config, 'turn')
       if (failure === undefined) {
         state.stopBlocks = 0
         if (count === 0 && !state.warnedNoChecks) {
           state.warnedNoChecks = true
           $.ui.log(NO_CHECKS)
+          await recordBlock($, 'Stop', NO_CHECKS)
         }
       } else if (state.stopBlocks >= MAX_STOP_BLOCKS) {
         state.stopBlocks = 0
-        $.ui.log(`guardrails: checks still fail after ${MAX_STOP_BLOCKS} retries; stopping so you can decide.\n${failure}`)
+        const gaveUp = `guardrails: checks still fail after ${MAX_STOP_BLOCKS} retries; stopping so you can decide.\n${failure}`
+        $.ui.log(gaveUp)
+        await recordBlock($, 'Stop', gaveUp)
       } else {
         state.stopBlocks += 1
-        return { block: `guardrails: checks fail; fix them before finishing (retry ${state.stopBlocks}/${MAX_STOP_BLOCKS}).\n${failure}` }
+        const block = `guardrails: checks fail; fix them before finishing (retry ${state.stopBlocks}/${MAX_STOP_BLOCKS}).\n${failure}`
+        await recordBlock($, 'Stop', block)
+        return { block }
       }
     }
     const claim = await judgeClaim($, config, e.last_assistant_message, current)
-    return claim === undefined ? next(e) : { block: claim }
+    if (claim === undefined) return next(e)
+    await recordBlock($, 'Stop', claim)
+    return { block: claim }
   }).catch(($, e, next) => next(e))
 
   on('prompt.submit', async ($, e, next) => {
     if (state.isOff || e.command !== undefined || e.isMeta === true || !TYPED_ORIGINS.has(e.origin.kind)) return next(e)
     const hold = await holdNewTask($, config, e.text)
-    if (hold !== undefined) return { drop: hold }
+    if (hold !== undefined) {
+      await recordBlock($, 'prompt', hold)
+      return { drop: hold }
+    }
     if (config.draftSpecs) await saveSpecDraft($, e.text)
     state.claimChecked = false
     if (config.stopGate) state.turnStartFp = await fingerprint($)
@@ -465,12 +502,12 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'checks' }, async $ => {
-    const { failure } = await runChecks($, config)
+    const { failure } = await runChecks($, config, 'full')
     return { text: failure === undefined ? '✓ checks pass' : `checks fail\n${failure}` }
   })
 
   on('command.run', { command: 'ship' }, async $ => {
-    const { failure } = await runChecks($, config)
+    const { failure } = await runChecks($, config, 'full')
     if (failure !== undefined) return { text: `not shipping, checks fail\n${failure}` }
     // A command cannot start a turn while it holds this one; the timer submits once it has returned.
     $.clock.after(SHIP_DELAY_MS, () => {

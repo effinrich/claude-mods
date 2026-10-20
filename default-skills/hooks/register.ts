@@ -67,12 +67,19 @@ const ensureLoaded = async ($: EngineInterface, refs: readonly SkillRef[]): Prom
   return cache
 }
 
+const TOKEN_WARNING = 2000
+
+const pinnedTokens = (result: LoadResult): number => result.loaded.reduce((sum, skill) => sum + Math.round(skill.text.length / 4), 0)
+
 const describe = (result: LoadResult): string => {
   const lines = result.loaded.map(
     skill => `✓ ${skill.label}: ~${Math.round(skill.text.length / 4)} tokens${skill.isClipped ? ' (cut to fit)' : ''} from ${skill.path}`,
   )
   lines.push(...result.missing.map(skill => `✗ ${skill.label}: not found (is the plugin installed?)`))
-  return lines.length === 0 ? 'No default skills configured.' : lines.join('\n')
+  if (lines.length === 0) return 'No default skills configured.'
+  const total = pinnedTokens(result)
+  lines.push(`total: ~${total} tokens with every turn${total > TOKEN_WARNING ? `. Over ~${TOKEN_WARNING}: consider dropping or shortening one in /config.` : ''}`)
+  return lines.join('\n')
 }
 
 export const register: Register = (on, options) => {
@@ -84,6 +91,9 @@ export const register: Register = (on, options) => {
     const loaded = await ensureLoaded($, refs)
     if (loaded.missing.length > 0) {
       $.ui.toast(`default-skills: ${loaded.missing.map(skill => skill.label).join(', ')} not found.`, { timeoutMs: 8_000 })
+    }
+    if (pinnedTokens(loaded) > TOKEN_WARNING) {
+      $.ui.toast(`default-skills: pinned skills add ~${pinnedTokens(loaded)} tokens to every turn. /default-skills shows each one.`, { timeoutMs: 8_000 })
     }
     $.ui.status(loaded.loaded.length === 0 ? undefined : `skills: ${loaded.loaded.map(skill => skill.label).join(', ')}`)
     return result

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
+import { blockEntry } from '../core/rules.ts'
 import { DEFAULT_CONFIG, type Config, type ToolName } from './types.ts'
 
 // Each hook call is a fresh process, so what a session needs to remember lives in a small JSON file.
@@ -13,6 +14,8 @@ export type SessionState = {
   // Working-tree fingerprints (git): at the start of the turn, and when checks last passed.
   turnStartFp: string | undefined
   passFp: string | undefined
+  // Whether the last passing run was the full suite (commits need that) or the end-of-turn subset.
+  lastPassFull: boolean
   claimChecked: boolean
   warnedNoChecks: boolean
   stopBlocks: number
@@ -34,6 +37,7 @@ const emptyState = (): SessionState => ({
   passHashes: undefined,
   turnStartFp: undefined,
   passFp: undefined,
+  lastPassFull: false,
   claimChecked: false,
   warnedNoChecks: false,
   stopBlocks: 0,
@@ -103,6 +107,22 @@ export const log = (line: string): void => {
   try {
     mkdirSync(modsHome(), { recursive: true })
     writeFileSync(join(modsHome(), 'hook.log'), `${new Date().toISOString()} ${line}\n`, { flag: 'a' })
+  } catch {
+    // Logging must never break a hook.
+  }
+}
+
+const MAX_BLOCK_LOG_BYTES = 1024 * 1024
+
+export const blockLogPath = (): string => join(modsHome(), 'blocks.log')
+
+// Every block, hold and send-back, so `doctor` can show which rules fire and how often.
+export const logBlock = (tool: string, reason: string, now: Date): void => {
+  try {
+    const path = blockLogPath()
+    mkdirSync(modsHome(), { recursive: true })
+    if (existsSync(path) && statSync(path).size > MAX_BLOCK_LOG_BYTES) writeFileSync(path, readFileSync(path, 'utf8').split('\n').slice(-2000).join('\n'))
+    writeFileSync(path, `${JSON.stringify(blockEntry(tool, reason, now))}\n`, { flag: 'a' })
   } catch {
     // Logging must never break a hook.
   }
