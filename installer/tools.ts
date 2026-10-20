@@ -114,7 +114,8 @@ const ourEntries = (tool: ToolName, runtimeMain: string): Record<string, unknown
           return {
             type: 'command',
             bash: command,
-            powershell: command,
+            // PowerShell reads a leading quoted path as a string, not a command, without the call operator.
+            powershell: `& ${command}`,
             ...(spec.matcher === undefined ? {} : { matcher: spec.matcher }),
             timeoutSec: timeout ?? 30,
           }

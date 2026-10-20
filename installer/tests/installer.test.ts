@@ -51,7 +51,10 @@ test('wires every tool, keeps the user own hooks and settings, and is idempotent
   assert.equal(cursor.hooks.stop.length, 2)
   assert.equal(cursor.hooks.stop[1].loop_limit, 3)
 
-  assert.equal(json('.copilot/hooks/claude-mods.json').hooks.agentStop[0].timeoutSec, 900)
+  const agentStop = json('.copilot/hooks/claude-mods.json').hooks.agentStop[0]
+  assert.equal(agentStop.timeoutSec, 900)
+  assert.equal(agentStop.powershell, `& ${agentStop.bash}`)
+  assert.match(agentStop.bash, /^"[^"]+" "[^"]+main\.js" copilot agentStop$/)
   assert.match(read('.agents/skills/ship/SKILL.md'), /name: ship/)
   assert.match(read('.cursor/skills/checks/SKILL.md'), /name: checks/)
   assert.match(read('.gemini/commands/ship.toml'), /^description = /m)
