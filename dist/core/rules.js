@@ -1,3 +1,4 @@
+import { isSourceFile } from "./imports.js";
 const COMMAND_RULES = [
     { pattern: /--no-verify\b/, reason: 'skips the hooks that guard commits; fix what they report instead' },
     { pattern: /\bgit\s+commit\b[^|;&]*\s-[a-zA-Z]*n[a-zA-Z]*\b/, reason: '`-n` skips the commit hooks; fix what they report instead' },
@@ -114,6 +115,7 @@ const RULE_NAMES = [
     [/outside the scope|forbidden by/, 'scope'],
     [/not owned by ticket|only the crew lead edits/, 'crew-ownership'],
     [/hand-edit/, 'lockfile'],
+    [/deletes the test file/, 'deleted-test'],
     [/removes assertions/, 'removed-assertions'],
     [/coverage threshold/, 'coverage'],
     [/mocks one of your own modules/, 'own-module-mock'],
@@ -152,4 +154,33 @@ export const summarizeBlocks = (logText, since) => {
         }
     }
     return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+};
+export const parseNameStatus = (output) => output
+    .split('\n')
+    .filter(line => line.trim() !== '')
+    .map((line) => {
+    const [code = '', first = '', second] = line.split('\t');
+    if (code.startsWith('R') || code.startsWith('C'))
+        return { status: 'modified', oldPath: first, path: second ?? first };
+    if (code === 'D')
+        return { status: 'deleted', oldPath: first, path: first };
+    if (code === 'A')
+        return { status: 'added', oldPath: first, path: first };
+    return { status: 'modified', oldPath: first, path: first };
+});
+// Everything a turn changed, whatever tool made the change: deleted tests and the same weakening rules the edit hooks apply.
+export const judgeTurnChanges = (changes) => {
+    for (const change of changes) {
+        if (change.status === 'deleted') {
+            if (TEST_FILE.test(change.path))
+                return `deletes the test file ${change.path}`;
+            continue;
+        }
+        if (!isSourceFile(change.path) && !isCoverageConfig(change.path))
+            continue;
+        const reason = judgeWeakening(change.newText, change.oldText, change.path);
+        if (reason !== undefined)
+            return `${reason} in ${change.path}`;
+    }
+    return undefined;
 };

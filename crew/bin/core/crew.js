@@ -55,7 +55,7 @@ export const parsePlan = (text) => {
         shared: [...DEFAULT_SHARED, ...(fields.shared ?? [])],
         checks: fields.checks ?? [],
         setup: fields.setup?.[0],
-        cap: Number.isInteger(cap) && cap > 0 ? cap : DEFAULT_CAP,
+        cap: Number.isInteger(cap) && cap > 0 ? cap : undefined,
     };
 };
 // The literal part of a glob before its first wildcard, cut back to a whole path segment.

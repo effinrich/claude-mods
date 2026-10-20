@@ -4,6 +4,7 @@ import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import {
   CREW_DIR,
+  DEFAULT_CAP,
   frontier,
   MARKER,
   outsideOwnership,
@@ -17,7 +18,7 @@ import {
 } from '../core/crew.ts'
 import { packageManager } from '../core/checks.ts'
 import { runCheckCommands } from './run-checks.ts'
-import { loadConfig } from './state.ts'
+import { loadConfig, loadProfile } from './state.ts'
 
 type TicketState = {
   status: TicketStatus
@@ -105,6 +106,8 @@ const withState = <T>(root: string, feature: string, change: (state: CrewState) 
   }
 }
 
+const capOf = (root: string, plan: CrewPlan): number => plan.cap ?? loadProfile(root).crewCap ?? DEFAULT_CAP
+
 const ticketOf = (tickets: readonly Ticket[], id: string): Ticket => {
   const ticket = tickets.find(candidate => candidate.id === id)
   if (ticket === undefined) throw new CrewError(`no ticket ${id}`)
@@ -159,7 +162,7 @@ const describeTicket = (ticket: Ticket): string => `${ticket.id}  [${ticket.role
 const printNext = (root: string, feature: string, out: Out): void => {
   const { plan, tickets } = loadPlan(root, feature)
   const state = readState(root, feature)
-  const ready = frontier(tickets, statuses(state), plan.cap)
+  const ready = frontier(tickets, statuses(state), capOf(root, plan))
   const counts = Object.values(state.tickets).reduce<Record<string, number>>((all, ticket) => ({ ...all, [ticket.status]: (all[ticket.status] ?? 0) + 1 }), {})
   out(`  ${Object.entries(counts).map(([status, count]) => `${count} ${status}`).join(', ')}`)
   if (ready.length > 0) out(`  ready now: ${ready.map(ticket => ticket.id).join(', ')} (run: crew next ${feature})`)
@@ -189,7 +192,7 @@ const init = (cwd: string, feature: string, out: Out): number => {
   )
   gitOrThrow(root, ['add', '--', join(CREW_DIR, feature)])
   if (!git(root, ['diff', '--cached', '--quiet']).ok) gitOrThrow(root, ['commit', '-m', `crew: plan ${feature}`])
-  out(`crew ${feature}: ${tickets.length} tickets on branch ${branch} (from ${base}), up to ${plan.cap} at once`)
+  out(`crew ${feature}: ${tickets.length} tickets on branch ${branch} (from ${base}), up to ${capOf(root, plan)} at once`)
   printNext(root, feature, out)
   return 0
 }
@@ -198,7 +201,7 @@ const next = (cwd: string, feature: string, cap: number | undefined, out: Out): 
   const root = mainRoot(cwd)
   const { plan, tickets } = loadPlan(root, feature)
   const ready = withState(root, feature, state => {
-    const picked = frontier(tickets, statuses(state), cap ?? plan.cap)
+    const picked = frontier(tickets, statuses(state), cap ?? capOf(root, plan))
     for (const ticket of picked) state.tickets[ticket.id] = { ...state.tickets[ticket.id], status: 'running', attempts: state.tickets[ticket.id]?.attempts ?? 0 }
     return picked
   })
@@ -253,6 +256,8 @@ const claim = (cwd: string, feature: string, id: string, out: Out): number => {
   out(`claimed ${id} in ${worktree} (branch ${branch})`)
   out(`you may edit only: ${ticket.owns.join(', ')}`)
   out(`checks: ${ticket.checks.join(' && ') || 'typecheck + lint + test'}`)
+  const skills = [loadProfile(root).roles?.[ticket.role], loadProfile(root).skills].filter((list): list is string => list !== undefined && list.trim() !== '')
+  if (skills.length > 0) out(`skills: ${skills.join(', ')} (invoke each with the Skill tool before editing; skip any that isn't installed)`)
   out('')
   out(ticket.body)
   return 0
@@ -377,11 +382,12 @@ const status = (cwd: string, feature: string, out: Out): number => {
 }
 
 const validate = (cwd: string, feature: string, out: Out): number => {
-  const { plan, tickets } = loadPlan(mainRoot(cwd), feature)
+  const root = mainRoot(cwd)
+  const { plan, tickets } = loadPlan(root, feature)
   const { errors, warnings } = validateGraph(tickets, plan)
   for (const warning of warnings) out(`warning: ${warning}`)
   for (const error of errors) out(`error: ${error}`)
-  if (errors.length === 0) out(`✓ ${tickets.length} tickets, up to ${plan.cap} at once`)
+  if (errors.length === 0) out(`✓ ${tickets.length} tickets, up to ${capOf(root, plan)} at once`)
   return errors.length === 0 ? 0 : 1
 }
 

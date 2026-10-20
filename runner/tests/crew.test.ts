@@ -121,9 +121,11 @@ describe('crew run', () => {
 
     crew(repo, 'next', 'orders')
     assert.ok(lines.some(line => line.includes('02-api')) && lines.some(line => line.includes('03-ui')))
+    put(repo, '.claude/claude-mods.json', JSON.stringify({ skills: 'plain-writing', roles: { backend: 'api-style' } }))
     const apiTree = spawnWorktree('02-api')
     const uiTree = spawnWorktree('03-ui')
     assert.equal(crew(apiTree, 'claim', 'orders', '02-api'), 0, lines.join('\n'))
+    assert.ok(lines.some(line => line.startsWith('skills: api-style, plain-writing')), lines.join('\n'))
     assert.equal(crew(uiTree, 'claim', 'orders', '03-ui'), 0, lines.join('\n'))
 
     const denied = await decide('codex', { promptContext: true }, DEFAULT_CONFIG, {

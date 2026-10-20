@@ -137,3 +137,35 @@ test('logs every block with its rule for doctor', async () => {
   assert.deepEqual(entries.map(entry => entry.rule), ['command', 'claim'])
   assert.equal(entries[0]?.tool, 'codex')
 })
+
+test('judges every change a turn made, shell edits included: deleted tests and weakened ones', async () => {
+  scripts({ test: pass })
+  put('src/a.test.ts', "it('a', () => { expect(1).toBe(1) })\n")
+  git('add', '.')
+  git('commit', '-qm', 'tests')
+
+  await prompt()
+  put('src/a.test.ts', "it.skip('a', () => { expect(1).toBe(1) })\n")
+  assert.match(reason(await stop()), /this turn skips or isolates tests in src\/a\.test\.ts/)
+  assert.notEqual((await stop()).kind, 'continue')
+
+  git('checkout', '--', 'src/a.test.ts')
+  await prompt()
+  git('rm', '-q', 'src/a.test.ts')
+  assert.match(reason(await stop()), /this turn deletes the test file src\/a\.test\.ts/)
+
+  git('reset', '-q', '--hard')
+  await prompt()
+  git('mv', 'src/a.test.ts', 'src/b.test.ts')
+  put('src/new.test.ts', "it('n', () => { expect(2).toBe(2) })\n")
+  assert.equal((await stop()).kind, 'allow')
+})
+
+test('changes that were already there when the turn started are not blamed on it', async () => {
+  scripts({ test: pass })
+  git('commit', '-qam', 'green')
+  put('src/legacy.test.ts', "it.skip('old', () => { expect(1).toBe(1) })\n")
+  await prompt()
+  put('src/a.ts', 'export const a = 9\n')
+  assert.equal((await stop()).kind, 'allow')
+})

@@ -40,6 +40,9 @@ test('writes the cursor rule, AGENTS.md block and settings from the git root, id
     assert.match(agents, /^# Team rules\nUse pnpm\.\n\n<!-- claude-mods:start/);
     assert.equal(agents.match(/claude-mods:start/g)?.length, 1);
     assert.ok(agents.includes(rule.split('-->\n')[1]?.trim() ?? 'missing'));
+    const profile = json('.claude/claude-mods.json');
+    assert.equal(profile.skills, 'ponytail:ponytail full, feature-based-architecture, default-skills:plain-writing');
+    assert.equal(profile.$managedBy, 'claude-mods project');
     const settings = json('.claude/settings.json');
     assert.deepEqual(settings.permissions, { allow: ['Bash(pnpm test)'] });
     assert.deepEqual(settings.extraKnownMarketplaces, { 'claude-mods': { source: { source: 'github', repo: 'effinrich/claude-mods' } } });
@@ -98,4 +101,12 @@ test('refuses to run outside a git repository', () => {
     const outside = mkdtempSync(join(tmpdir(), 'claude-mods-nogit-'));
     assert.equal(run(['project'], join(base, 'home'), line => lines.push(line), outside), 1);
     assert.ok(lines.some(line => line.includes('not inside a git repository')));
+});
+test('uses the skills in a team profile it did not write, and leaves that file alone', () => {
+    put('.claude/claude-mods.json', JSON.stringify({ skills: 'house-style' }));
+    project();
+    assert.match(read('AGENTS.md'), /the `house-style` skill/);
+    assert.doesNotMatch(read('AGENTS.md'), /ponytail/);
+    project('--remove');
+    assert.equal(read('.claude/claude-mods.json'), JSON.stringify({ skills: 'house-style' }));
 });

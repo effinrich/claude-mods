@@ -1,8 +1,9 @@
 import type { EngineInterface, PluginOptions, Register } from 'claude-code'
 import { CHECK_ENV, composeFingerprint, isChangedOnly, resolveChecks, summarizeFailures, untrackedPaths, type CheckMode, type CheckRun } from './checks.ts'
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases, unresearchedPackages } from './imports.ts'
-import { blockEntry, claimedSuccess, isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from './rules.ts'
+import { blockEntry, claimedSuccess, isCoverageConfig, judgeTurnChanges, parseNameStatus, type TurnChange, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from './rules.ts'
 import { judgeOwnership, MARKER, parseMarker, type Marker } from './crew.ts'
+import { mergeProfiles, parseProfile, PROFILE_FILE, USER_PROFILE_FILE, type Profile } from './profile.ts'
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH, type Spec } from './spec.ts'
 
 type Config = {
@@ -32,7 +33,12 @@ type GuardState = {
   lastPassFull: boolean
   claimChecked: boolean
   warnedNoChecks: boolean
+  // Where the turn started (git), so the end of the turn can judge every change, shell edits included.
+  turnBase: TurnBase | undefined
+  turnChangesChecked: boolean
 }
+
+type TurnBase = { commit: string; untracked: Record<string, string> }
 
 const MAX_STOP_BLOCKS = 2
 const FAILURE_LINES = 30
@@ -75,6 +81,8 @@ const state: GuardState = {
   lastPassFull: false,
   claimChecked: false,
   warnedNoChecks: false,
+  turnBase: undefined,
+  turnChangesChecked: false,
 }
 
 const readConfig = (options: PluginOptions): Config => ({
@@ -96,6 +104,34 @@ const readConfig = (options: PluginOptions): Config => ({
       ? options.checkTimeoutMinutes
       : 10) * 60_000,
 })
+
+const readOptional = async ($: EngineInterface, path: string | undefined): Promise<string | undefined> => {
+  if (path === undefined) return undefined
+  const text = await $.fs.read(path).catch(() => undefined)
+  return typeof text === 'string' ? text : undefined
+}
+
+// The user's ~/.claude-mods/profile.json, overridden by the repo's .claude/claude-mods.json.
+const loadProfile = async ($: EngineInterface): Promise<Profile> => {
+  const [modsHome, home, root] = await Promise.all([$.env.get('CLAUDE_MODS_HOME'), $.env.get('HOME'), $.session.root()])
+  const dir = modsHome ?? (home === undefined ? undefined : `${home}/.claude-mods`)
+  const [user, repo] = await Promise.all([
+    readOptional($, dir === undefined ? undefined : `${dir}/${USER_PROFILE_FILE}`),
+    readOptional($, `${root}/${PROFILE_FILE}`),
+  ])
+  return mergeProfiles(parseProfile(user), parseProfile(repo))
+}
+
+const withProfile = (config: Config, profile: Profile): Config => {
+  const settings = profile.guardrails ?? {}
+  return {
+    ...config,
+    stopGate: settings.stopGate ?? config.stopGate,
+    writingGate: settings.writingGate ?? config.writingGate,
+    researchHoldLines: settings.researchHoldLines ?? config.researchHoldLines,
+    checkTimeoutMs: settings.checkTimeoutMinutes === undefined ? config.checkTimeoutMs : settings.checkTimeoutMinutes * 60_000,
+  }
+}
 
 const clip = (text: string, max = 80): string => (text.length <= max ? text : `${text.slice(0, max)}…`)
 
@@ -254,6 +290,56 @@ const fingerprint = async ($: EngineInterface): Promise<string | undefined> => {
   return composeFingerprint(tree?.exitCode === 0 ? tree.stdout : '', diff?.exitCode === 0 ? diff.stdout : '', untracked, blobs?.stdout ?? '')
 }
 
+const MAX_TURN_FILES = 200
+const RESTORE = 'Restore it. If it is truly needed, say why under "Suggestions:" and let the user decide.'
+
+const gitText = async ($: EngineInterface, args: readonly string[], stdin?: string): Promise<string | undefined> => {
+  const ran = await $.process
+    .run(['git', ...args], { cwd: await $.session.root(), timeoutMs: 15_000, ...(stdin === undefined ? {} : { stdin }) })
+    .catch(() => undefined)
+  return ran?.exitCode === 0 ? ran.stdout : undefined
+}
+
+const untrackedBlobs = async ($: EngineInterface): Promise<Record<string, string>> => {
+  const paths = untrackedPaths((await gitText($, ['ls-files', '--others', '--exclude-standard', '-z'])) ?? '').slice(0, MAX_TURN_FILES)
+  if (paths.length === 0) return {}
+  const blobs = ((await gitText($, ['hash-object', '--stdin-paths'], paths.join('\n'))) ?? '').trim().split('\n')
+  return Object.fromEntries(paths.map((path, i) => [path, blobs[i] ?? '']))
+}
+
+// A commit holding the working tree (`git stash create` touches no refs) plus the untracked files' blobs.
+const captureTurnBase = async ($: EngineInterface): Promise<TurnBase | undefined> => {
+  if ((await gitText($, ['rev-parse', '--is-inside-work-tree'])) === undefined) return undefined
+  const commit = (await gitText($, ['stash', 'create']))?.trim() || (await gitText($, ['rev-parse', 'HEAD']))?.trim()
+  return commit === undefined || commit === '' ? undefined : { commit, untracked: await untrackedBlobs($) }
+}
+
+const turnChanges = async ($: EngineInterface, base: TurnBase): Promise<TurnChange[]> => {
+  const root = await $.session.root()
+  const read = async (path: string): Promise<string> => {
+    const text = await $.fs.read(`${root}/${path}`).catch(() => '')
+    return typeof text === 'string' ? text : ''
+  }
+  const tracked: TurnChange[] = []
+  for (const change of parseNameStatus((await gitText($, ['diff', '--name-status', '-M', base.commit])) ?? '').slice(0, MAX_TURN_FILES)) {
+    tracked.push({
+      path: change.path,
+      status: change.status,
+      oldText: change.status === 'added' ? '' : ((await gitText($, ['show', `${base.commit}:${change.oldPath}`])) ?? ''),
+      newText: change.status === 'deleted' ? '' : await read(change.path),
+    })
+  }
+  const now = await untrackedBlobs($)
+  const added: TurnChange[] = []
+  for (const [path, blob] of Object.entries(now)) {
+    if (base.untracked[path] !== blob) added.push({ path, status: 'added', oldText: '', newText: await read(path) })
+  }
+  const removed = Object.keys(base.untracked)
+    .filter(path => now[path] === undefined && !tracked.some(change => change.path === path))
+    .map((path): TurnChange => ({ path, status: 'deleted', oldText: '', newText: '' }))
+  return [...tracked, ...added, ...removed]
+}
+
 const isUnchanged = (current: string | undefined, needsFull = false): boolean =>
   (!needsFull || state.lastPassFull) && current !== undefined && state.lastResult === 'pass' && current === state.passFp
 
@@ -376,10 +462,12 @@ const guardStatusText = async ($: EngineInterface): Promise<string> => {
 }
 
 export const register: Register = (on, options) => {
-  const config = readConfig(options)
+  // Plugin options first; a profile (user, then repo) overrides them at session start.
+  let config = readConfig(options)
 
   on('session.start', async ($, e, next) => {
     const result = await next(e)
+    config = withProfile(readConfig(options), await loadProfile($).catch(() => ({})))
     await Promise.all([
       $.command.register({ name: 'guard', description: 'Guardrails: status, or `on` / `off` for this session.', argumentHint: '[on|off]' }),
       $.command.register({ name: 'checks', description: 'Run the spec checks (or typecheck + lint + test) now.' }),
@@ -447,7 +535,17 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'guardrails: the command check failed, so the command is held.' }))
 
   on('classic.Stop', async ($, e, next) => {
-    if (state.isOff || !config.stopGate) return next(e)
+    if (state.isOff) return next(e)
+    if (state.turnBase !== undefined && !state.turnChangesChecked) {
+      state.turnChangesChecked = true
+      const reason = judgeTurnChanges(await turnChanges($, state.turnBase))
+      if (reason !== undefined) {
+        const block = `guardrails: this turn ${reason}. ${RESTORE}`
+        await recordBlock($, 'Stop', block)
+        return { block }
+      }
+    }
+    if (!config.stopGate) return next(e)
     const current = await fingerprint($)
     const isChanged = state.isDirty || (current !== undefined && state.turnStartFp !== undefined && current !== state.turnStartFp)
     if (isChanged && isUnchanged(current)) {
@@ -489,6 +587,8 @@ export const register: Register = (on, options) => {
     }
     if (config.draftSpecs) await saveSpecDraft($, e.text)
     state.claimChecked = false
+    state.turnChangesChecked = false
+    state.turnBase = await captureTurnBase($)
     if (config.stopGate) state.turnStartFp = await fingerprint($)
     return next(e)
   }).catch(($, e, next) => next(e))

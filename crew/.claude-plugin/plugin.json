@@ -1,6 +1,6 @@
 {
   "name": "crew",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Plans a goal as a ticket graph, then runs specialist agents (designer, frontend, backend, tester, docs, reviewer) in parallel worktrees, each limited to the files its ticket owns, and merges their work into one branch.",
   "author": {
     "name": "Rich Tillman"

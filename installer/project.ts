@@ -5,6 +5,7 @@ import { parseSkillList } from '../core/skills.ts'
 import { modsHome } from '../runner/state.ts'
 import { ALL_MODS, backupStamp, CLAUDE_EXTRAS, DEFAULT_SKILLS, describePlan, flag, MARKETPLACE, parseList, type Log, type ModName } from './cli.ts'
 import { Plan, readJsonObject, readText, withBlock } from './files.ts'
+import { parseProfile, PROFILE_FILE } from '../core/profile.ts'
 import { instructionLines, MANAGED, planManagedFile } from './skills.ts'
 
 type PluginName = ModName | (typeof CLAUDE_EXTRAS)[number]
@@ -78,13 +79,28 @@ const planSettings = (plan: Plan, path: string, plugins: readonly PluginName[] |
   if (existsSync(path)) plan.remove(path)
 }
 
+const PROFILE_MARKER = 'claude-mods project'
+
+// The team profile: written when the repo has none, removed only if claude-mods wrote it.
+const planProfile = (plan: Plan, path: string, skills: string, isRemoving: boolean): void => {
+  const current = readText(path)
+  const isOurs = current !== undefined && current.includes(`"$managedBy": "${PROFILE_MARKER}"`)
+  if (current !== undefined && !isOurs) {
+    if (!isRemoving) plan.note(`${path} exists and is not managed by claude-mods, so it was left alone (its skills are used).`)
+    return
+  }
+  if (isRemoving) return isOurs ? plan.remove(path, true) : undefined
+  plan.write(path, `${JSON.stringify({ $managedBy: PROFILE_MARKER, skills, guardrails: {}, roles: {} }, null, 2)}\n`, true)
+}
+
 const pruneEmptyDirs = (root: string, dirs: readonly string[]): void => {
   for (const dir of dirs.map(name => join(root, name))) {
     if (existsSync(dir) && readdirSync(dir).length === 0) rmdirSync(dir)
   }
 }
 
-export const planProject = (root: string, plugins: readonly PluginName[], skillList: string, isRemoving: boolean): Plan => {
+export const planProject = (root: string, plugins: readonly PluginName[], skillFlag: string | undefined, isRemoving: boolean): Plan => {
+  const skillList = skillFlag ?? parseProfile(readText(join(root, PROFILE_FILE))).skills ?? DEFAULT_SKILLS
   const skills = plugins.includes('default-skills') ? parseSkillList(skillList) : []
   // `~` rather than this machine's home: the files are committed and read on every teammate's machine.
   const lines = isRemoving ? [] : instructionLines(plugins.includes('guardrails'), skills, skill => `~/.agents/skills/${skill}/SKILL.md`, true)
@@ -93,6 +109,7 @@ export const planProject = (root: string, plugins: readonly PluginName[], skillL
   planManagedFile(plan, join(root, RULE_PATH), block === undefined ? undefined : cursorRule(block))
   planAgents(plan, join(root, 'AGENTS.md'), block)
   planSettings(plan, join(root, SETTINGS_PATH), isRemoving ? undefined : plugins)
+  planProfile(plan, join(root, PROFILE_FILE), skillList, isRemoving)
   return plan
 }
 
@@ -110,7 +127,7 @@ export const runProject = (args: readonly string[], cwd: string, log: Log): numb
   const isRemoving = args.includes('--remove')
   const isDryRun = args.includes('--dry-run')
   const plugins = parseList(flag(args, 'mods'), PLUGINS) ?? [...ALL_MODS]
-  const plan = planProject(root, plugins, flag(args, 'skills') ?? DEFAULT_SKILLS, isRemoving)
+  const plan = planProject(root, plugins, flag(args, 'skills'), isRemoving)
 
   log(`${isDryRun ? '[dry run] ' : ''}claude-mods project ${isRemoving ? 'remove' : plugins.join(', ')} → ${root}`)
   describePlan(plan, log, path => relative(root, path))
@@ -122,6 +139,6 @@ export const runProject = (args: readonly string[], cwd: string, log: Log): numb
   plan.apply(stamp, path => join(backups, relative(root, path)))
   if (isRemoving) pruneEmptyDirs(root, [join('.cursor', 'rules'), '.cursor', '.claude'])
   if (existsSync(backups)) log(`  backups of changed files: ${backups}`)
-  log(isRemoving ? 'Removed. Commit the result.' : `Commit ${RULE_PATH}, AGENTS.md and ${SETTINGS_PATH}. Each teammate still runs the global install once.`)
+  log(isRemoving ? 'Removed. Commit the result.' : `Commit ${RULE_PATH}, AGENTS.md, ${SETTINGS_PATH} and ${PROFILE_FILE}. Each teammate still runs the global install once.`)
   return 0
 }

@@ -4,7 +4,8 @@ import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isDebugOn, payloadLogPath } from "../runner/debug.js";
-import { blockLogPath, loadConfig, modsHome } from "../runner/state.js";
+import { blockLogPath, loadConfig, loadProfile, modsHome } from "../runner/state.js";
+import { DEFAULT_TOKEN_BUDGET, USER_PROFILE_FILE } from "../core/profile.js";
 import { clipSkill, parseSkillList, renderSkill, skillLabel } from "../core/skills.js";
 import { summarizeBlocks } from "../core/rules.js";
 import { DEFAULT_CONFIG, TOOLS } from "../runner/types.js";
@@ -70,7 +71,7 @@ const install = (args, home, log, isUpdate) => {
     const choices = {
         tools: parseList(flag(args, 'tools'), ['claude', ...TOOLS]) ?? (isUpdate ? stored?.tools : undefined) ?? detected,
         mods: parseList(flag(args, 'mods'), ALL_MODS) ?? (isUpdate ? stored?.mods : undefined) ?? [...ALL_MODS],
-        skills: flag(args, 'skills') ?? (isUpdate ? stored?.skills : undefined) ?? DEFAULT_SKILLS,
+        skills: flag(args, 'skills') ?? (isUpdate ? stored?.skills : undefined) ?? loadProfile().skills ?? DEFAULT_SKILLS,
     };
     const isDryRun = args.includes('--dry-run');
     if (choices.tools.length === 0) {
@@ -131,7 +132,6 @@ const uninstall = (args, home, log) => {
     return 0;
 };
 const missingNodePaths = (home) => [...new Set(TOOLS.flatMap(tool => hookNodePaths(home, tool)))].filter(node => !existsSync(node));
-const PINNED_TOKEN_WARNING = 2000;
 const GUARDRAILS_RULE_TOKENS = 110;
 const BLOCK_WINDOW_DAYS = 7;
 // What the default skills and the guardrails rule add to every turn, from the skill files this machine has.
@@ -146,9 +146,10 @@ const reportPinnedTokens = (home, choices, log) => {
     if (mods.includes('guardrails'))
         parts.push(['guardrails rule', GUARDRAILS_RULE_TOKENS]);
     const total = parts.reduce((sum, [, tokens]) => sum + (tokens ?? 0), 0);
+    const budget = loadProfile().tokenBudget ?? DEFAULT_TOKEN_BUDGET;
     log(`  pinned per turn: ~${total} tokens (${parts.map(([name, tokens]) => `${name} ${tokens === undefined ? 'not found' : `~${tokens}`}`).join(', ') || 'nothing'})`);
-    if (total > PINNED_TOKEN_WARNING)
-        log(`  WARNING: over ~${PINNED_TOKEN_WARNING} tokens ride along with every turn. Drop or shorten a default skill (--skills).`);
+    if (total > budget)
+        log(`  WARNING: over ~${budget} tokens ride along with every turn. Drop or shorten a default skill (--skills or the profile).`);
 };
 const reportBlocks = (log) => {
     const since = new Date(Date.now() - BLOCK_WINDOW_DAYS * 24 * 60 * 60_000);
@@ -174,7 +175,9 @@ const doctor = (home, log) => {
         log(`  WARNING: the hooks run Node from ${node}, which no longer exists (a Node upgrade via nvm or similar?).`);
         log('           Run `npx github:effinrich/claude-mods update` to point them at your current Node.');
     }
-    reportPinnedTokens(home, choices, log);
+    const profilePath = join(modsHome(), USER_PROFILE_FILE);
+    log(`  profile: ${existsSync(profilePath) ? profilePath : `none (optional: ${profilePath}; a repo's .claude/claude-mods.json overrides it)`}`);
+    reportPinnedTokens(home, choices === undefined ? undefined : { ...choices, skills: loadProfile().skills ?? choices.skills }, log);
     reportBlocks(log);
     const config = loadConfig();
     log(isDebugOn(config)

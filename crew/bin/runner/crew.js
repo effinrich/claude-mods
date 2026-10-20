@@ -2,10 +2,10 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { CREW_DIR, frontier, MARKER, outsideOwnership, parsePlan, parseTicket, validateGraph, } from "../core/crew.js";
+import { CREW_DIR, DEFAULT_CAP, frontier, MARKER, outsideOwnership, parsePlan, parseTicket, validateGraph, } from "../core/crew.js";
 import { packageManager } from "../core/checks.js";
 import { runCheckCommands } from "./run-checks.js";
-import { loadConfig } from "./state.js";
+import { loadConfig, loadProfile } from "./state.js";
 const MAX_ATTEMPTS = 2;
 const LOCK_WAIT_MS = 15_000;
 class CrewError extends Error {
@@ -77,6 +77,7 @@ const withState = (root, feature, change) => {
         rmSync(lock, { recursive: true, force: true });
     }
 };
+const capOf = (root, plan) => plan.cap ?? loadProfile(root).crewCap ?? DEFAULT_CAP;
 const ticketOf = (tickets, id) => {
     const ticket = tickets.find(candidate => candidate.id === id);
     if (ticket === undefined)
@@ -126,7 +127,7 @@ const describeTicket = (ticket) => `${ticket.id}  [${ticket.role}]  owns: ${tick
 const printNext = (root, feature, out) => {
     const { plan, tickets } = loadPlan(root, feature);
     const state = readState(root, feature);
-    const ready = frontier(tickets, statuses(state), plan.cap);
+    const ready = frontier(tickets, statuses(state), capOf(root, plan));
     const counts = Object.values(state.tickets).reduce((all, ticket) => ({ ...all, [ticket.status]: (all[ticket.status] ?? 0) + 1 }), {});
     out(`  ${Object.entries(counts).map(([status, count]) => `${count} ${status}`).join(', ')}`);
     if (ready.length > 0)
@@ -157,7 +158,7 @@ const init = (cwd, feature, out) => {
     gitOrThrow(root, ['add', '--', join(CREW_DIR, feature)]);
     if (!git(root, ['diff', '--cached', '--quiet']).ok)
         gitOrThrow(root, ['commit', '-m', `crew: plan ${feature}`]);
-    out(`crew ${feature}: ${tickets.length} tickets on branch ${branch} (from ${base}), up to ${plan.cap} at once`);
+    out(`crew ${feature}: ${tickets.length} tickets on branch ${branch} (from ${base}), up to ${capOf(root, plan)} at once`);
     printNext(root, feature, out);
     return 0;
 };
@@ -165,7 +166,7 @@ const next = (cwd, feature, cap, out) => {
     const root = mainRoot(cwd);
     const { plan, tickets } = loadPlan(root, feature);
     const ready = withState(root, feature, state => {
-        const picked = frontier(tickets, statuses(state), cap ?? plan.cap);
+        const picked = frontier(tickets, statuses(state), cap ?? capOf(root, plan));
         for (const ticket of picked)
             state.tickets[ticket.id] = { ...state.tickets[ticket.id], status: 'running', attempts: state.tickets[ticket.id]?.attempts ?? 0 };
         return picked;
@@ -226,6 +227,9 @@ const claim = (cwd, feature, id, out) => {
     out(`claimed ${id} in ${worktree} (branch ${branch})`);
     out(`you may edit only: ${ticket.owns.join(', ')}`);
     out(`checks: ${ticket.checks.join(' && ') || 'typecheck + lint + test'}`);
+    const skills = [loadProfile(root).roles?.[ticket.role], loadProfile(root).skills].filter((list) => list !== undefined && list.trim() !== '');
+    if (skills.length > 0)
+        out(`skills: ${skills.join(', ')} (invoke each with the Skill tool before editing; skip any that isn't installed)`);
     out('');
     out(ticket.body);
     return 0;
@@ -350,14 +354,15 @@ const status = (cwd, feature, out) => {
     return 0;
 };
 const validate = (cwd, feature, out) => {
-    const { plan, tickets } = loadPlan(mainRoot(cwd), feature);
+    const root = mainRoot(cwd);
+    const { plan, tickets } = loadPlan(root, feature);
     const { errors, warnings } = validateGraph(tickets, plan);
     for (const warning of warnings)
         out(`warning: ${warning}`);
     for (const error of errors)
         out(`error: ${error}`);
     if (errors.length === 0)
-        out(`✓ ${tickets.length} tickets, up to ${plan.cap} at once`);
+        out(`✓ ${tickets.length} tickets, up to ${capOf(root, plan)} at once`);
     return errors.length === 0 ? 0 : 1;
 };
 export const CREW_USAGE = `usage: crew <command> <feature> [ticket]

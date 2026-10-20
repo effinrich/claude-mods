@@ -8,10 +8,10 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 const COPIES = {
-  guardrails: ['spec', 'imports', 'rules', 'checks', 'crew'],
+  guardrails: ['spec', 'imports', 'rules', 'checks', 'crew', 'profile'],
   'compaction-guard': ['handoff'],
   'context-audit': ['drift'],
-  'default-skills': ['skills'],
+  'default-skills': ['skills', 'profile'],
 }
 
 const header = name => `// Generated from core/${name}.ts by scripts/sync-core.mjs. Edit core/${name}.ts, then run the script.\n`

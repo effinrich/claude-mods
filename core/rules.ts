@@ -1,3 +1,5 @@
+import { isSourceFile } from './imports.ts'
+
 type Rule = { pattern: RegExp; reason: string; isTypeScriptOnly?: true }
 
 const COMMAND_RULES: readonly Rule[] = [
@@ -129,6 +131,7 @@ const RULE_NAMES: readonly [RegExp, string][] = [
   [/outside the scope|forbidden by/, 'scope'],
   [/not owned by ticket|only the crew lead edits/, 'crew-ownership'],
   [/hand-edit/, 'lockfile'],
+  [/deletes the test file/, 'deleted-test'],
   [/removes assertions/, 'removed-assertions'],
   [/coverage threshold/, 'coverage'],
   [/mocks one of your own modules/, 'own-module-mock'],
@@ -170,4 +173,35 @@ export const summarizeBlocks = (logText: string, since: Date): [string, number][
     }
   }
   return [...counts.entries()].sort((a, b) => b[1] - a[1])
+}
+
+export type TurnChange = { path: string; status: 'added' | 'modified' | 'deleted'; oldText: string; newText: string }
+
+// `git diff --name-status -M` lines: renames carry both paths, so a moved test isn't read as a deleted one.
+export type NameStatus = { status: TurnChange['status']; oldPath: string; path: string }
+
+export const parseNameStatus = (output: string): NameStatus[] =>
+  output
+    .split('\n')
+    .filter(line => line.trim() !== '')
+    .map((line): NameStatus => {
+      const [code = '', first = '', second] = line.split('\t')
+      if (code.startsWith('R') || code.startsWith('C')) return { status: 'modified', oldPath: first, path: second ?? first }
+      if (code === 'D') return { status: 'deleted', oldPath: first, path: first }
+      if (code === 'A') return { status: 'added', oldPath: first, path: first }
+      return { status: 'modified', oldPath: first, path: first }
+    })
+
+// Everything a turn changed, whatever tool made the change: deleted tests and the same weakening rules the edit hooks apply.
+export const judgeTurnChanges = (changes: readonly TurnChange[]): string | undefined => {
+  for (const change of changes) {
+    if (change.status === 'deleted') {
+      if (TEST_FILE.test(change.path)) return `deletes the test file ${change.path}`
+      continue
+    }
+    if (!isSourceFile(change.path) && !isCoverageConfig(change.path)) continue
+    const reason = judgeWeakening(change.newText, change.oldText, change.path)
+    if (reason !== undefined) return `${reason} in ${change.path}`
+  }
+  return undefined
 }

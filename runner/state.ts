@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
+import { mergeProfiles, parseProfile, PROFILE_FILE, USER_PROFILE_FILE, type Profile } from '../core/profile.ts'
 import { blockEntry } from '../core/rules.ts'
 import { DEFAULT_CONFIG, type Config, type ToolName } from './types.ts'
 
@@ -18,6 +19,9 @@ export type SessionState = {
   lastPassFull: boolean
   claimChecked: boolean
   warnedNoChecks: boolean
+  // Where the turn started (git), so the end of the turn can judge every change, shell edits included.
+  turnBase: { commit: string; untracked: Record<string, string> } | undefined
+  turnChangesChecked: boolean
   stopBlocks: number
   originalTask: string | undefined
   prompts: string[]
@@ -40,6 +44,8 @@ const emptyState = (): SessionState => ({
   lastPassFull: false,
   claimChecked: false,
   warnedNoChecks: false,
+  turnBase: undefined,
+  turnChangesChecked: false,
   stopBlocks: 0,
   originalTask: undefined,
   prompts: [],
@@ -80,9 +86,34 @@ export const rememberTouched = (state: SessionState, paths: readonly string[]): 
   state.touched = [...new Set([...paths, ...state.touched])].slice(0, MAX_TOUCHED)
 }
 
-export const loadConfig = (): Config => {
+const readText = (path: string): string | undefined => {
+  try {
+    return readFileSync(path, 'utf8')
+  } catch {
+    return undefined
+  }
+}
+
+// The user's profile, overridden by the repo's when a root is given.
+export const loadProfile = (root?: string): Profile =>
+  mergeProfiles(
+    parseProfile(readText(join(modsHome(), USER_PROFILE_FILE))),
+    root === undefined ? {} : parseProfile(readText(join(root, PROFILE_FILE))),
+  )
+
+export const applyProfile = (config: Config, profile: Profile): Config => {
+  const settings = profile.guardrails ?? {}
+  return {
+    ...config,
+    stopGate: settings.stopGate ?? config.stopGate,
+    writingGate: settings.writingGate ?? config.writingGate,
+    checkTimeoutMs: settings.checkTimeoutMinutes === undefined ? config.checkTimeoutMs : settings.checkTimeoutMinutes * 60_000,
+  }
+}
+
+export const loadConfig = (root?: string): Config => {
   const stored = readJson(join(modsHome(), 'config.json')) as Partial<Config> | undefined
-  return { ...DEFAULT_CONFIG, ...stored, mods: { ...DEFAULT_CONFIG.mods, ...stored?.mods } }
+  return applyProfile({ ...DEFAULT_CONFIG, ...stored, mods: { ...DEFAULT_CONFIG.mods, ...stored?.mods } }, loadProfile(root))
 }
 
 export const handoffPath = (root: string): string => {

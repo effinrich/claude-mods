@@ -13,6 +13,7 @@ type World = {
   setExit: (label: string, exitCode: number) => void
   setPercent: (percent: number) => void
   setTree: (diff: string | undefined) => void
+  setGit: (answers: Record<string, string>) => void
 }
 
 const world = (on: On, initial: Record<string, string> = {}): World => {
@@ -27,7 +28,10 @@ const world = (on: On, initial: Record<string, string> = {}): World => {
   const clock = mock.clock(on, { now: 1_000_000 })
   // Not a git repo unless a test sets a working tree; then the fingerprint follows `tree`.
   let tree: string | undefined
+  let gitAnswers: Record<string, string> = {}
   const git = (args: readonly string[]) => {
+    const answer = gitAnswers[args.join(' ')]
+    if (answer !== undefined) return { value: { exitCode: 0, stdout: answer, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     const isRepo = tree !== undefined
     const stdout = args[0] === 'diff' ? (tree ?? '') : args[0] === 'rev-parse' && args[1] === 'HEAD^{tree}' ? 'abc' : ''
     return { value: { exitCode: isRepo ? 0 : 128, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -90,6 +94,9 @@ const world = (on: On, initial: Record<string, string> = {}): World => {
     },
     setTree: diff => {
       tree = diff
+    },
+    setGit: answers => {
+      gitAnswers = answers
     },
   }
 }
@@ -287,4 +294,17 @@ test('runs only changed tests at the end of a turn and records the block for doc
 
   await $.tool.call({ tool: 'Bash', command: 'git push --force' })
   expect(files.get('/home/dev/.claude-mods/blocks.log')).toContain('"rule":"command"')
+})
+
+test('judges what the whole turn changed, so a test deleted or skipped through the shell is caught once', async ($, on) => {
+  const { files, setTree, setGit } = world(on, BASE)
+  setTree('')
+  setGit({ 'stash create': 'base1' })
+  await prompt($, 'Clean up the tests.')
+
+  setGit({ 'stash create': 'base1', 'diff --name-status -M base1': 'D\tsrc/old.test.ts\nM\tsrc/a.test.ts\n', 'show base1:src/a.test.ts': "it('a', () => { expect(1).toBe(1) })" })
+  files.set(`${ROOT}/src/a.test.ts`, "it('a', () => { expect(1).toBe(1) })")
+  const caught = await $.classic.Stop({})
+  expect(caught.block).toContain('this turn deletes the test file src/old.test.ts')
+  expect((await $.classic.Stop({})).block ?? '').not.toContain('this turn')
 })

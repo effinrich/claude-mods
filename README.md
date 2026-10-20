@@ -54,6 +54,26 @@ Then check it works: ask the agent to run `git reset --hard`. It should be refus
 
 The hooks call Node by the absolute path it had at install time, so GUI apps without your shell's PATH still find it. After a Node upgrade (nvm, fnm, Homebrew) that path can disappear; `doctor` warns about it, and `update` fixes it.
 
+### One profile for every tool
+
+Skills and gate settings live in one file that every part reads: the Claude Code plugins, the other tools' hooks, `install`, `project` and crew agents.
+
+- `~/.claude-mods/profile.json` is yours. A repo's `.claude/claude-mods.json` is the team's, gets committed, and overrides yours key by key.
+
+```json
+{
+  "skills": ["ponytail:ponytail full", "default-skills:plain-writing"],
+  "roles": { "designer": "frontend-design", "backend": "api-style" },
+  "guardrails": { "writingGate": true, "stopGate": true, "researchHoldLines": 150, "checkTimeoutMinutes": 10 },
+  "crew": { "cap": 8 },
+  "tokenBudget": 2000
+}
+```
+
+- `skills` replaces the default-skills list (and `--skills` for the other tools). `roles` adds skills per crew specialist: `crew claim` lists them and the specialist loads them before editing, so the skills reach agents that never see the main session's prompt.
+- `guardrails` overrides the plugin settings; `crew.cap` is the default width when a plan sets none; `tokenBudget` is the limit `doctor` and `/default-skills` warn at.
+- Keys with the wrong type are ignored, so a typo can't switch a gate off.
+
 ### Shared repo setup
 
 Run this inside a repo (any folder in it; the files go at the git root):
@@ -67,6 +87,7 @@ npx github:effinrich/claude-mods project [--mods ...] [--skills ...] [--dry-run]
 | `.cursor/rules/claude-mods.mdc` | an always-applied Cursor rule (owned by claude-mods) |
 | `AGENTS.md` | a marked block at the end; the rest of the file is left as is |
 | `.claude/settings.json` | merged in: the `claude-mods` marketplace under `extraKnownMarketplaces` and `<mod>@claude-mods: true` under `enabledPlugins` |
+| `.claude/claude-mods.json` | the team profile with the chosen skills, if the repo has none yet (an existing one is read, not changed) |
 
 The rule and the block carry the guardrails lines and one line per default skill. Each skill line points at `~/.agents/skills/<skill>/SKILL.md` and tells the agent to skip it when that file is missing, so teammates without the skill are not affected. `--mods` also accepts `context-meter` and `cli-passthrough` for the Claude Code settings. A plugin someone set to `false` in the settings stays off.
 
@@ -131,6 +152,7 @@ A prompt over 1500 characters with no spec yet is saved there as a draft for you
 - Finishing a turn that changed files while checks fail. In a git repo any change counts, shell edits included. Claude is sent back up to 2 times, then stops and reports.
 - Finishing with a reply that says tests pass, all green, fixed or verified while the checks fail. Claude is sent back once to correct it. Checks that never ran are run first.
 - `git commit` while checks fail.
+- At the end of a turn, everything the turn changed is checked against where it started, whatever made the change: a deleted test file, or a `.skip`, `@ts-ignore`, removed assertion or lowered threshold added through the shell, sends Claude back once to restore it or explain. A moved test isn't counted as deleted, and changes that were already there before the turn aren't blamed on it.
 - With no `checks:` in the spec, the checks are the `typecheck`, `lint` and `test` scripts (npm init's placeholder test script is ignored). A repo with none of them gets a one-time notice. The end-of-turn gate runs only changed tests for a bare `vitest` or `jest` script; commits and `/ship` run everything.
 
 Every block, hold and send-back is logged to `~/.claude-mods/blocks.log` (shared with the other tools). `npx github:effinrich/claude-mods doctor` counts them per rule for the last 7 days, so you can see which rules earn their keep.

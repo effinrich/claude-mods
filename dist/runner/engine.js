@@ -6,14 +6,16 @@ import { diffSnapshots, snapshotFile } from "../core/drift.js";
 import { judgeOwnership, MARKER, parseMarker } from "../core/crew.js";
 import { renderHandoff } from "../core/handoff.js";
 import { isChangedOnly } from "../core/checks.js";
-import { runCheckCommands, runCheckReport, workTreeFingerprint } from "./run-checks.js";
+import { captureTurnBase, runCheckCommands, runCheckReport, turnChanges, workTreeFingerprint } from "./run-checks.js";
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases } from "../core/imports.js";
-import { claimedSuccess, isCoverageConfig, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from "../core/rules.js";
+import { claimedSuccess, isCoverageConfig, judgeTurnChanges, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from "../core/rules.js";
 import { draftSpec, judgeScope, parseSpec, SPEC_PATH } from "../core/spec.js";
-import { handoffPath, logBlock, loadState, log, modsHome, rememberPrompt, rememberTouched, saveState, writeJson, } from "./state.js";
+import { applyProfile, handoffPath, loadProfile, logBlock, loadState, log, modsHome, rememberPrompt, rememberTouched, saveState, writeJson, } from "./state.js";
 import { ALLOW } from "./types.js";
 const MAX_STOP_BLOCKS = 2;
 const SPEC_DRAFT_MIN_CHARS = 1500;
+// For changes made outside the edit hooks (shell, scripts), caught when the turn ends.
+const RESTORE = 'Restore it. If it is truly needed, say why under "Suggestions:" and let the user decide.';
 const SUGGEST = 'If it needs changing, list it under "Suggestions:" in your reply.';
 const readText = (path) => {
     try {
@@ -234,7 +236,7 @@ export const decide = async (tool, capabilities, config, event, now) => {
     const root = projectRoot(event.cwd);
     const state = loadState(tool, event.sessionId);
     try {
-        const verdict = await decideWithState(tool, capabilities, config, event, root, state, now);
+        const verdict = await decideWithState(tool, capabilities, applyProfile(config, loadProfile(root)), event, root, state, now);
         if (verdict.kind === 'deny' || verdict.kind === 'continue')
             logBlock(tool, verdict.reason, now);
         if (verdict.kind === 'notice' && verdict.text.startsWith('guardrails:'))
@@ -288,7 +290,15 @@ const decideWithState = async (tool, capabilities, config, event, root, state, n
             return ALLOW;
         }
         case 'stop': {
-            if (!config.mods.guardrails || !config.stopGate)
+            if (!config.mods.guardrails)
+                return ALLOW;
+            if (state.turnBase !== undefined && !state.turnChangesChecked) {
+                state.turnChangesChecked = true;
+                const reason = judgeTurnChanges(turnChanges(root, state.turnBase));
+                if (reason !== undefined)
+                    return { kind: 'continue', reason: `guardrails: this turn ${reason}. ${RESTORE}` };
+            }
+            if (!config.stopGate)
                 return ALLOW;
             const fingerprint = workTreeFingerprint(root);
             const isChanged = state.isDirty || (fingerprint !== undefined && state.turnStartFp !== undefined && fingerprint !== state.turnStartFp);
@@ -300,6 +310,9 @@ const decideWithState = async (tool, capabilities, config, event, root, state, n
         case 'prompt': {
             rememberPrompt(state, event.text);
             state.claimChecked = false;
+            state.turnChangesChecked = false;
+            if (config.mods.guardrails)
+                state.turnBase = captureTurnBase(root);
             if (config.mods.guardrails && config.stopGate)
                 state.turnStartFp = workTreeFingerprint(root);
             if (config.mods.guardrails && config.draftSpecs && event.text.length >= SPEC_DRAFT_MIN_CHARS && !existsSync(join(root, SPEC_PATH))) {

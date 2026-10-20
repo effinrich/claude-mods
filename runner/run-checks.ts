@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { parseNameStatus, type TurnChange } from '../core/rules.ts'
 import { CHECK_ENV, composeFingerprint, isTestCommand, resolveChecks, summarizeFailures, untrackedPaths, type CheckMode, type CheckRun } from '../core/checks.ts'
 import type { Config } from './types.ts'
 
@@ -61,4 +62,42 @@ export const workTreeFingerprint = (root: string): string | undefined => {
   const untracked = untrackedPaths(gitOut(root, ['ls-files', '--others', '--exclude-standard', '-z']) ?? '')
   const blobs = untracked.length === 0 ? '' : (gitOut(root, ['hash-object', '--stdin-paths'], untracked.join('\n')) ?? '')
   return composeFingerprint(tree, diff, untracked, blobs)
+}
+
+const MAX_TURN_FILES = 200
+
+// Where the turn started: a commit holding the working tree (`git stash create`, which touches no refs) and the
+// untracked files' blobs. Undefined outside a git repo.
+export type TurnBase = { commit: string; untracked: Record<string, string> }
+
+const untrackedBlobs = (root: string): Record<string, string> => {
+  const paths = untrackedPaths(gitOut(root, ['ls-files', '--others', '--exclude-standard', '-z']) ?? '').slice(0, MAX_TURN_FILES)
+  if (paths.length === 0) return {}
+  const blobs = (gitOut(root, ['hash-object', '--stdin-paths'], paths.join('\n')) ?? '').trim().split('\n')
+  return Object.fromEntries(paths.map((path, i) => [path, blobs[i] ?? '']))
+}
+
+export const captureTurnBase = (root: string): TurnBase | undefined => {
+  if (gitOut(root, ['rev-parse', '--is-inside-work-tree']) === undefined) return undefined
+  const commit = gitOut(root, ['stash', 'create'])?.trim() || gitOut(root, ['rev-parse', 'HEAD'])?.trim()
+  return commit === undefined || commit === '' ? undefined : { commit, untracked: untrackedBlobs(root) }
+}
+
+export const turnChanges = (root: string, base: TurnBase): TurnChange[] => {
+  const tracked = parseNameStatus(gitOut(root, ['diff', '--name-status', '-M', base.commit]) ?? '')
+    .slice(0, MAX_TURN_FILES)
+    .map(change => ({
+      path: change.path,
+      status: change.status,
+      oldText: change.status === 'added' ? '' : (gitOut(root, ['show', `${base.commit}:${change.oldPath}`]) ?? ''),
+      newText: change.status === 'deleted' ? '' : (readText(join(root, change.path)) ?? ''),
+    }))
+  const now = untrackedBlobs(root)
+  const added = Object.entries(now)
+    .filter(([path, blob]) => base.untracked[path] !== blob)
+    .map(([path]): TurnChange => ({ path, status: 'added', oldText: '', newText: readText(join(root, path)) ?? '' }))
+  const removed = Object.keys(base.untracked)
+    .filter(path => now[path] === undefined && !tracked.some(change => change.path === path))
+    .map((path): TurnChange => ({ path, status: 'deleted', oldText: '', newText: '' }))
+  return [...tracked, ...added, ...removed]
 }

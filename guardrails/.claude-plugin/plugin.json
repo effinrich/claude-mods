@@ -1,6 +1,6 @@
 {
   "name": "guardrails",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Blocks edits outside the task spec, made-up packages, check-weakening edits and destructive git; gates finishing, committing and /ship on passing checks.",
   "author": {
     "name": "Rich Tillman"

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
+import { mergeProfiles, parseProfile, PROFILE_FILE, USER_PROFILE_FILE } from "../core/profile.js";
 import { blockEntry } from "../core/rules.js";
 import { DEFAULT_CONFIG } from "./types.js";
 const MAX_PROMPTS = 8;
@@ -17,6 +18,8 @@ const emptyState = () => ({
     lastPassFull: false,
     claimChecked: false,
     warnedNoChecks: false,
+    turnBase: undefined,
+    turnChangesChecked: false,
     stopBlocks: 0,
     originalTask: undefined,
     prompts: [],
@@ -48,9 +51,28 @@ export const rememberPrompt = (state, text) => {
 export const rememberTouched = (state, paths) => {
     state.touched = [...new Set([...paths, ...state.touched])].slice(0, MAX_TOUCHED);
 };
-export const loadConfig = () => {
+const readText = (path) => {
+    try {
+        return readFileSync(path, 'utf8');
+    }
+    catch {
+        return undefined;
+    }
+};
+// The user's profile, overridden by the repo's when a root is given.
+export const loadProfile = (root) => mergeProfiles(parseProfile(readText(join(modsHome(), USER_PROFILE_FILE))), root === undefined ? {} : parseProfile(readText(join(root, PROFILE_FILE))));
+export const applyProfile = (config, profile) => {
+    const settings = profile.guardrails ?? {};
+    return {
+        ...config,
+        stopGate: settings.stopGate ?? config.stopGate,
+        writingGate: settings.writingGate ?? config.writingGate,
+        checkTimeoutMs: settings.checkTimeoutMinutes === undefined ? config.checkTimeoutMs : settings.checkTimeoutMinutes * 60_000,
+    };
+};
+export const loadConfig = (root) => {
     const stored = readJson(join(modsHome(), 'config.json'));
-    return { ...DEFAULT_CONFIG, ...stored, mods: { ...DEFAULT_CONFIG.mods, ...stored?.mods } };
+    return applyProfile({ ...DEFAULT_CONFIG, ...stored, mods: { ...DEFAULT_CONFIG.mods, ...stored?.mods } }, loadProfile(root));
 };
 export const handoffPath = (root) => {
     const hash = createHash('sha256').update(root).digest('hex').slice(0, 6);

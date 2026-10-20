@@ -1,4 +1,5 @@
 import type { EngineInterface, PluginOptions, Register } from 'claude-code'
+import { DEFAULT_TOKEN_BUDGET, mergeProfiles, parseProfile, PROFILE_FILE, USER_PROFILE_FILE, type Profile } from './profile.ts'
 import { clipSkill, newestVersion, parseSkillList, renderSkill, skillLabel, type SkillRef } from './skills.ts'
 
 type Loaded = { label: string; text: string; path: string; isClipped: boolean }
@@ -8,9 +9,25 @@ type LoadResult = { loaded: readonly Loaded[]; missing: readonly Missing[] }
 const DEFAULT_SKILLS = 'ponytail:ponytail full, feature-based-architecture, default-skills:plain-writing'
 
 let cache: LoadResult | undefined
+let budget = DEFAULT_TOKEN_BUDGET
 
-const readSkills = (options: PluginOptions): SkillRef[] =>
-  parseSkillList(typeof options.skills === 'string' ? options.skills : DEFAULT_SKILLS)
+const readText = async ($: EngineInterface, path: string | undefined): Promise<string | undefined> => {
+  if (path === undefined) return undefined
+  const text = await $.fs.read(path).catch(() => undefined)
+  return typeof text === 'string' ? text : undefined
+}
+
+// The user's ~/.claude-mods/profile.json, overridden by the repo's .claude/claude-mods.json.
+const loadProfile = async ($: EngineInterface): Promise<Profile> => {
+  const [modsHome, home, root] = await Promise.all([$.env.get('CLAUDE_MODS_HOME'), $.env.get('HOME'), $.session.root()])
+  const dir = modsHome ?? (home === undefined ? undefined : `${home}/.claude-mods`)
+  const [user, repo] = await Promise.all([readText($, dir === undefined ? undefined : `${dir}/${USER_PROFILE_FILE}`), readText($, `${root}/${PROFILE_FILE}`)])
+  return mergeProfiles(parseProfile(user), parseProfile(repo))
+}
+
+// A profile's skill list wins over the plugin option, which wins over the default.
+const readSkills = (options: PluginOptions, profile: Profile): SkillRef[] =>
+  parseSkillList(profile.skills ?? (typeof options.skills === 'string' ? options.skills : DEFAULT_SKILLS))
 
 const dirNames = async ($: EngineInterface, path: string): Promise<string[]> =>
   (await $.fs.list(path).catch(() => [])).filter(entry => entry.kind === 'dir').map(entry => entry.name)
@@ -67,8 +84,6 @@ const ensureLoaded = async ($: EngineInterface, refs: readonly SkillRef[]): Prom
   return cache
 }
 
-const TOKEN_WARNING = 2000
-
 const pinnedTokens = (result: LoadResult): number => result.loaded.reduce((sum, skill) => sum + Math.round(skill.text.length / 4), 0)
 
 const describe = (result: LoadResult): string => {
@@ -78,21 +93,25 @@ const describe = (result: LoadResult): string => {
   lines.push(...result.missing.map(skill => `✗ ${skill.label}: not found (is the plugin installed?)`))
   if (lines.length === 0) return 'No default skills configured.'
   const total = pinnedTokens(result)
-  lines.push(`total: ~${total} tokens with every turn${total > TOKEN_WARNING ? `. Over ~${TOKEN_WARNING}: consider dropping or shortening one in /config.` : ''}`)
+  lines.push(`total: ~${total} tokens with every turn${total > budget ? `. Over ~${budget}: consider dropping or shortening one in /config.` : ''}`)
   return lines.join('\n')
 }
 
 export const register: Register = (on, options) => {
-  const refs = readSkills(options)
+  let refs = readSkills(options, {})
 
   on('session.start', async ($, e, next) => {
     const result = await next(e)
+    const profile = await loadProfile($).catch((): Profile => ({}))
+    refs = readSkills(options, profile)
+    budget = profile.tokenBudget ?? DEFAULT_TOKEN_BUDGET
+    cache = undefined
     await $.command.register({ name: 'default-skills', description: 'Show which skills are pinned into every turn.' })
     const loaded = await ensureLoaded($, refs)
     if (loaded.missing.length > 0) {
       $.ui.toast(`default-skills: ${loaded.missing.map(skill => skill.label).join(', ')} not found.`, { timeoutMs: 8_000 })
     }
-    if (pinnedTokens(loaded) > TOKEN_WARNING) {
+    if (pinnedTokens(loaded) > budget) {
       $.ui.toast(`default-skills: pinned skills add ~${pinnedTokens(loaded)} tokens to every turn. /default-skills shows each one.`, { timeoutMs: 8_000 })
     }
     $.ui.status(loaded.loaded.length === 0 ? undefined : `skills: ${loaded.loaded.map(skill => skill.label).join(', ')}`)

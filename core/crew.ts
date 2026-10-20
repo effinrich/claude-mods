@@ -16,7 +16,8 @@ export type CrewPlan = {
   shared: readonly string[]
   checks: readonly string[]
   setup: string | undefined
-  cap: number
+  // Unset means the profile's crew cap, else DEFAULT_CAP.
+  cap: number | undefined
 }
 
 export type TicketStatus = 'queued' | 'running' | 'merged' | 'failed'
@@ -85,7 +86,7 @@ export const parsePlan = (text: string): CrewPlan => {
     shared: [...DEFAULT_SHARED, ...(fields.shared ?? [])],
     checks: fields.checks ?? [],
     setup: fields.setup?.[0],
-    cap: Number.isInteger(cap) && cap > 0 ? cap : DEFAULT_CAP,
+    cap: Number.isInteger(cap) && cap > 0 ? cap : undefined,
   }
 }
 
