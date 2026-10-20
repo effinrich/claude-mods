@@ -107,6 +107,7 @@ export const applyProfile = (config: Config, profile: Profile): Config => {
     ...config,
     stopGate: settings.stopGate ?? config.stopGate,
     writingGate: settings.writingGate ?? config.writingGate,
+    backgroundChecks: settings.backgroundChecks ?? config.backgroundChecks,
     checkTimeoutMs: settings.checkTimeoutMinutes === undefined ? config.checkTimeoutMs : settings.checkTimeoutMinutes * 60_000,
   }
 }

@@ -1,4 +1,5 @@
 import { ADAPTERS } from "./adapters/index.js";
+import { runBackground } from "./background.js";
 import { runCrew } from "./crew.js";
 import { capturePayload, isDebugOn } from "./debug.js";
 import { decide, projectRoot, runChecks } from "./engine.js";
@@ -38,6 +39,8 @@ const main = async () => {
     const [first, second] = process.argv.slice(2);
     if (first === 'check')
         return runChecksCommand(second ?? process.cwd());
+    if (first === 'background' && second !== undefined)
+        return runBackground(second);
     if (first === 'crew')
         return runCrew(process.argv.slice(3), process.cwd(), line => console.log(line));
     if (!isTool(first) || second === undefined) {

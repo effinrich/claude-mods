@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { beforeEach, test } from 'node:test';
@@ -147,4 +147,28 @@ test('changes that were already there when the turn started are not blamed on it
     await prompt();
     put('src/a.ts', 'export const a = 9\n');
     assert.equal((await stop()).kind, 'allow');
+});
+test('the end-of-turn gate uses a background run of the same tree instead of running the checks again', async () => {
+    scripts({ test: `node -e "require('fs').appendFileSync('runs.txt','x')"` });
+    put('.gitignore', 'runs.txt\n');
+    git('add', '.');
+    git('commit', '-qm', 'counting');
+    const config = { ...DEFAULT_CONFIG, backgroundChecks: 'on' };
+    const runs = () => (existsSync(join(root, 'runs.txt')) ? readFileSync(join(root, 'runs.txt'), 'utf8').length : 0);
+    const waitFor = (isDone) => {
+        const started = Date.now();
+        while (!isDone() && Date.now() - started < 20_000)
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    };
+    await decide('codex', { promptContext: true }, config, { ...base(), kind: 'prompt', text: 'go' }, new Date());
+    put('src/a.ts', 'export const a = 6\n');
+    await decide('codex', { promptContext: true }, config, { ...base(), kind: 'edit', edits: [{ path: join(root, 'src/a.ts'), newText: 'export const a = 6\n', oldText: undefined }] }, new Date());
+    const resultsDir = join(process.env.CLAUDE_MODS_HOME ?? '', 'results');
+    waitFor(() => existsSync(resultsDir) && readdirSync(resultsDir).some(name => name.endsWith('.json')));
+    assert.equal(runs(), 1);
+    assert.equal((await decide('codex', { promptContext: true }, config, { ...base(), kind: 'stop', isRepeat: false }, new Date())).kind, 'allow');
+    assert.equal(runs(), 1);
+    put('src/a.ts', 'export const a = 7\n');
+    await decide('codex', { promptContext: true }, config, { ...base(), kind: 'stop', isRepeat: false }, new Date());
+    assert.equal(runs(), 2);
 });

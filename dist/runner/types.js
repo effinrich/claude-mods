@@ -4,6 +4,7 @@ export const DEFAULT_CONFIG = {
     stopGate: true,
     draftSpecs: true,
     writingGate: true,
+    backgroundChecks: 'auto',
     allowImports: [],
     checkTimeoutMs: 10 * 60_000,
     debug: false,

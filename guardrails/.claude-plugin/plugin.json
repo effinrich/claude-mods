@@ -1,6 +1,6 @@
 {
   "name": "guardrails",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Blocks edits outside the task spec, made-up packages, check-weakening edits and destructive git; gates finishing, committing and /ship on passing checks.",
   "author": {
     "name": "Rich Tillman"
@@ -35,6 +35,12 @@
       "title": "Hold large new files until the library is looked up (lines)",
       "description": "A new source file at least this long that imports a library the session has not searched, read or fetched docs for is held once. 0 turns it off.",
       "default": 150
+    },
+    "backgroundChecks": {
+      "type": "string",
+      "title": "Run end-of-turn checks in the background (auto, on, off)",
+      "description": "auto: after edits, run the checks in the background when they are the quick changed-only vitest/jest run, so the end of the turn doesn't wait. on: always. off: never.",
+      "default": "auto"
     },
     "newTaskPercent": {
       "type": "number",

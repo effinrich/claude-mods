@@ -6,6 +6,7 @@ import { diffSnapshots, snapshotFile, type FileSnapshot, type Snapshot } from '.
 import { judgeOwnership, MARKER, parseMarker, type Marker } from '../core/crew.ts'
 import { renderHandoff } from '../core/handoff.ts'
 import { isChangedOnly, type CheckMode } from '../core/checks.ts'
+import { backgroundResult, isBackgroundOn, triggerBackground } from './background.ts'
 import { captureTurnBase, runCheckCommands, runCheckReport, turnChanges, workTreeFingerprint } from './run-checks.ts'
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases } from '../core/imports.ts'
 import { claimedSuccess, isCoverageConfig, judgeTurnChanges, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from '../core/rules.ts'
@@ -161,7 +162,8 @@ const isUnchanged = (state: SessionState, root: string, fingerprint: string | un
   (fingerprint === undefined ? isUnchangedSincePass(state, root) : state.lastResult === 'pass' && fingerprint === state.passFp)
 
 const runAndRecord = (config: Config, root: string, state: SessionState, mode: CheckMode): { failure: string | undefined; count: number } => {
-  const report = runCheckReport(config, root, loadSpec(root)?.checks ?? [], mode)
+  const ready = mode === 'turn' && isBackgroundOn(config, root) ? backgroundResult(root, workTreeFingerprint(root), config.checkTimeoutMs) : undefined
+  const report = ready ?? runCheckReport(config, root, loadSpec(root)?.checks ?? [], mode)
   recordChecks(state, root, report.failure)
   state.lastPassFull = report.failure === undefined && (mode === 'full' || !report.labels.some(isChangedOnly))
   return { failure: report.failure, count: report.labels.length }
@@ -290,12 +292,14 @@ const decideWithState = async (
       if (verdict.kind === 'allow' && !isCrewOnly) {
         state.isDirty = true
         rememberTouched(state, event.edits.map(edit => edit.path))
+        if (config.stopGate && isBackgroundOn(config, root)) triggerBackground(root)
       }
       return verdict
     }
     case 'edited': {
       if (config.mods.guardrails) state.isDirty = true
       rememberTouched(state, event.paths)
+      if (config.mods.guardrails && config.stopGate && isBackgroundOn(config, root)) triggerBackground(root)
       return ALLOW
     }
     case 'shell': {

@@ -39,11 +39,15 @@ export type Adapter = {
   emit: (event: string, verdict: Verdict) => HookReply
 }
 
+export type BackgroundMode = 'auto' | 'on' | 'off'
+
 export type Config = {
   mods: { guardrails: boolean; compactionGuard: boolean; contextAudit: boolean }
   stopGate: boolean
   draftSpecs: boolean
   writingGate: boolean
+  // Run the end-of-turn checks in the background after edits: `auto` only for changed-only vitest/jest runs.
+  backgroundChecks: BackgroundMode
   allowImports: readonly string[]
   checkTimeoutMs: number
   // Append each raw hook payload to ~/.claude-mods/payloads.log (also on with CLAUDE_MODS_DEBUG=1).
@@ -55,6 +59,7 @@ export const DEFAULT_CONFIG: Config = {
   stopGate: true,
   draftSpecs: true,
   writingGate: true,
+  backgroundChecks: 'auto',
   allowImports: [],
   checkTimeoutMs: 10 * 60_000,
   debug: false,

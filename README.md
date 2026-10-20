@@ -39,7 +39,7 @@ Needs Node 20 or newer. MIT licensed.
 | `/ship` and `/checks` | skills (`$ship`) | `/ship` command | skills | skills |
 | Default skills (ponytail, plain-writing) always on | ✓ AGENTS.md | ✓ GEMINI.md | ◐ skill copied; add the rule in Cursor Settings → Rules, or per repo with `project` | ✓ copilot-instructions.md |
 
-In a git repo the gates see every change to the working tree, including edits made through the shell, and skip the check run when nothing changed since the checks last passed. With no `checks:` in the spec they run the `typecheck`, `lint` and `test` scripts, with `CI=true` so test runners don't start in watch mode. At the end of a turn, a `test` script that is just `vitest`, `vitest run` or `jest` runs only the tests related to changed files (`vitest run --changed`, `jest --onlyChanged`); commits run the whole suite. A repo with none of those gets a one-time notice instead of a silent pass. A reply that claims success ("tests pass", "all green", "fixed", "verified") is checked once per turn: if the checks fail, the agent is sent back to correct the reply. Codex and Gemini CLI pass the reply to their hooks; Cursor and Copilot don't, so they skip that part.
+In a git repo the gates see every change to the working tree, including edits made through the shell, and skip the check run when nothing changed since the checks last passed. With no `checks:` in the spec they run the `typecheck`, `lint` and `test` scripts, with `CI=true` so test runners don't start in watch mode. At the end of a turn, a `test` script that is just `vitest`, `vitest run` or `jest` runs only the tests related to changed files (`vitest run --changed`, `jest --onlyChanged`); commits run the whole suite. With `backgroundChecks` on (`auto` does this for those changed-only runs; `on` for any checks, `off` never), the checks start in the background a moment after each edit; when the turn ends the gate uses that result if it was run on exactly the current files, waits for a run that is still going, or runs the checks itself if the files changed since. A repo with none of those gets a one-time notice instead of a silent pass. A reply that claims success ("tests pass", "all green", "fixed", "verified") is checked once per turn: if the checks fail, the agent is sent back to correct the reply. Codex and Gemini CLI pass the reply to their hooks; Cursor and Copilot don't, so they skip that part.
 
 Not ported: context-meter (these tools have no custom status line command) and cli-passthrough (it is specific to Claude Code's own CLI). The context-percentage hold is also missing, because none of these tools tell hooks how full the context is, and so is the research-first hold, because their hooks don't see reads and searches. They get the matching instruction line instead.
 
@@ -64,7 +64,7 @@ Skills and gate settings live in one file that every part reads: the Claude Code
 {
   "skills": ["ponytail:ponytail full", "default-skills:plain-writing"],
   "roles": { "designer": "frontend-design", "backend": "api-style" },
-  "guardrails": { "writingGate": true, "stopGate": true, "researchHoldLines": 150, "checkTimeoutMinutes": 10 },
+  "guardrails": { "writingGate": true, "stopGate": true, "researchHoldLines": 150, "checkTimeoutMinutes": 10, "backgroundChecks": "auto" },
   "crew": { "cap": 8 },
   "tokenBudget": 2000
 }

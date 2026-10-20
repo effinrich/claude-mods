@@ -12,6 +12,7 @@ type Config = {
   draftSpecs: boolean
   writingGate: boolean
   researchHoldLines: number
+  backgroundChecks: 'auto' | 'on' | 'off'
   newTaskPercent: number
   allowImports: ReadonlySet<string>
   checkTimeoutMs: number
@@ -92,6 +93,7 @@ const readConfig = (options: PluginOptions): Config => ({
   writingGate: options.writingGate !== false,
   researchHoldLines:
     typeof options.researchHoldLines === 'number' && options.researchHoldLines >= 0 ? options.researchHoldLines : 150,
+  backgroundChecks: options.backgroundChecks === 'on' || options.backgroundChecks === 'off' ? options.backgroundChecks : 'auto',
   newTaskPercent:
     typeof options.newTaskPercent === 'number' && options.newTaskPercent > 0 ? options.newTaskPercent : 75,
   allowImports: new Set(
@@ -129,6 +131,7 @@ const withProfile = (config: Config, profile: Profile): Config => {
     stopGate: settings.stopGate ?? config.stopGate,
     writingGate: settings.writingGate ?? config.writingGate,
     researchHoldLines: settings.researchHoldLines ?? config.researchHoldLines,
+    backgroundChecks: settings.backgroundChecks ?? config.backgroundChecks,
     checkTimeoutMs: settings.checkTimeoutMinutes === undefined ? config.checkTimeoutMs : settings.checkTimeoutMinutes * 60_000,
   }
 }
@@ -365,7 +368,9 @@ const denied = async ($: EngineInterface, tool: string, deny: string): Promise<{
   return { deny }
 }
 
-const runChecks = async ($: EngineInterface, config: Config, mode: CheckMode): Promise<CheckOutcome> => {
+type Executed = { failure: string | undefined; labels: readonly string[] }
+
+const resolveCommands = async ($: EngineInterface, mode: CheckMode) => {
   const root = await $.session.root()
   const [spec, packageJson, entries] = await Promise.all([
     loadSpec($, root),
@@ -378,23 +383,83 @@ const runChecks = async ($: EngineInterface, config: Config, mode: CheckMode): P
     new Set(entries.map(entry => entry.name)),
     mode,
   )
+  return { root, spec, commands }
+}
 
+// Runs the checks and reports; changes no state, so a background run can do it too.
+const executeChecks = async ($: EngineInterface, config: Config, mode: CheckMode, isQuiet = false): Promise<Executed> => {
+  const { root, commands } = await resolveCommands($, mode)
   const runs: CheckRun[] = []
   for (const command of commands) {
-    $.ui.status(`guard · running ${command.label}`)
+    if (!isQuiet) $.ui.status(`guard · running ${command.label}`)
     const ran = await $.process
       .run(command.argv, { cwd: root, timeoutMs: config.checkTimeoutMs, env: { ...CHECK_ENV } })
       .catch((error: unknown) => ({ exitCode: 127, stdout: '', stderr: String(error) }))
     runs.push({ label: command.label, exitCode: ran.exitCode, output: `${ran.stdout}\n${ran.stderr}` })
   }
-
   const failure = summarizeFailures(runs, FAILURE_LINES)
-  state.lastResult = failure === '' ? 'pass' : 'fail'
-  state.isDirty = failure !== ''
-  state.passFp = failure === '' ? await fingerprint($) : undefined
-  state.lastPassFull = failure === '' && (mode === 'full' || !commands.some(command => isChangedOnly(command.label)))
-  showStatus($, spec)
-  return { failure: failure === '' ? undefined : failure, count: commands.length }
+  return { failure: failure === '' ? undefined : failure, labels: commands.map(command => command.label) }
+}
+
+// The end-of-turn checks started after edits, keyed by the working tree they ran on. In memory: the module lives as
+// long as the session.
+type Background = { fingerprint: string; done: Promise<Executed | undefined> }
+const background: { current: Background | undefined; generation: number; isRunning: boolean; isRerunWanted: boolean } = {
+  current: undefined,
+  generation: 0,
+  isRunning: false,
+  isRerunWanted: false,
+}
+const BACKGROUND_DELAY_MS = 1_500
+
+const isBackgroundOn = async ($: EngineInterface, config: Config): Promise<boolean> => {
+  if (!config.stopGate || config.backgroundChecks === 'off') return false
+  if (config.backgroundChecks === 'on') return true
+  return (await resolveCommands($, 'turn')).commands.some(command => isChangedOnly(command.label))
+}
+
+const startBackground = async ($: EngineInterface, config: Config): Promise<void> => {
+  const tree = await fingerprint($)
+  if (tree === undefined || background.current?.fingerprint === tree) return
+  if (background.isRunning) {
+    background.isRerunWanted = true
+    return
+  }
+  background.isRunning = true
+  const done = executeChecks($, config, 'turn', true)
+    .then(async result => ((await fingerprint($)) === tree ? result : undefined))
+    .catch(() => undefined)
+    .finally(() => {
+      background.isRunning = false
+      if (background.isRerunWanted) {
+        background.isRerunWanted = false
+        scheduleBackground($, config)
+      }
+    })
+  background.current = { fingerprint: tree, done }
+}
+
+// Debounced: only the last edit in a burst starts a run.
+const scheduleBackground = ($: EngineInterface, config: Config): void => {
+  const generation = ++background.generation
+  $.clock.after(BACKGROUND_DELAY_MS, () => {
+    if (generation !== background.generation) return
+    void isBackgroundOn($, config).then(isOn => (isOn ? startBackground($, config) : undefined)).catch(() => undefined)
+  })
+}
+
+const backgroundResult = async (tree: string | undefined): Promise<Executed | undefined> =>
+  tree !== undefined && background.current?.fingerprint === tree ? background.current.done : undefined
+
+const runChecks = async ($: EngineInterface, config: Config, mode: CheckMode): Promise<CheckOutcome> => {
+  const ready = mode === 'turn' ? await backgroundResult(await fingerprint($)) : undefined
+  const { failure, labels } = ready ?? (await executeChecks($, config, mode))
+  state.lastResult = failure === undefined ? 'pass' : 'fail'
+  state.isDirty = failure !== undefined
+  state.passFp = failure === undefined ? await fingerprint($) : undefined
+  state.lastPassFull = failure === undefined && (mode === 'full' || !labels.some(isChangedOnly))
+  showStatus($, await loadSpec($, await $.session.root()))
+  return { failure, count: labels.length }
 }
 
 const runChecksIfNeeded = async ($: EngineInterface, config: Config): Promise<string | undefined> => {
@@ -493,7 +558,10 @@ export const register: Register = (on, options) => {
     const deny = await judgeEdit($, config, e.file_path, e.new_string, e.old_string)
     if (deny !== undefined) return denied($, 'Edit', deny)
     const result = await next(e)
-    if (result.deny === undefined && result.isError !== true && !(await isInCrewWorktree($, e.file_path))) state.isDirty = true
+    if (result.deny === undefined && result.isError !== true && !(await isInCrewWorktree($, e.file_path))) {
+      state.isDirty = true
+      scheduleBackground($, config)
+    }
     return result
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'guardrails: the edit check failed, so the edit is held.' }))
 
@@ -506,7 +574,10 @@ export const register: Register = (on, options) => {
       (isNew ? holdForResearch(config, e.file_path, e.content) : undefined)
     if (deny !== undefined) return denied($, 'Write', deny)
     const result = await next(e)
-    if (result.deny === undefined && result.isError !== true && !(await isInCrewWorktree($, e.file_path))) state.isDirty = true
+    if (result.deny === undefined && result.isError !== true && !(await isInCrewWorktree($, e.file_path))) {
+      state.isDirty = true
+      scheduleBackground($, config)
+    }
     return result
   }).catch(($, e, next) => (next.called ? next(e) : { deny: 'guardrails: the write check failed, so the write is held.' }))
 

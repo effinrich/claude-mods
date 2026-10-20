@@ -7,6 +7,7 @@ export type GuardrailsSettings = {
   writingGate?: boolean
   researchHoldLines?: number
   checkTimeoutMinutes?: number
+  backgroundChecks?: 'auto' | 'on' | 'off'
 }
 
 export type Profile = {
@@ -30,6 +31,9 @@ const positive = (value: unknown): number | undefined => (typeof value === 'numb
 
 const flag = (value: unknown): boolean | undefined => (typeof value === 'boolean' ? value : undefined)
 
+const backgroundMode = (value: unknown): 'auto' | 'on' | 'off' | undefined =>
+  value === 'auto' || value === 'on' || value === 'off' ? value : undefined
+
 const withoutUndefined = <T extends Record<string, unknown>>(record: T): T =>
   Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined)) as T
 
@@ -52,6 +56,7 @@ export const parseProfile = (text: string | undefined): Profile => {
         writingGate: flag(parsed.guardrails.writingGate),
         researchHoldLines: positive(parsed.guardrails.researchHoldLines),
         checkTimeoutMinutes: positive(parsed.guardrails.checkTimeoutMinutes),
+        backgroundChecks: backgroundMode(parsed.guardrails.backgroundChecks),
       })
     : undefined
   const crew = isRecord(parsed.crew) ? parsed.crew : {}

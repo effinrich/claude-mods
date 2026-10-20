@@ -308,3 +308,30 @@ test('judges what the whole turn changed, so a test deleted or skipped through t
   expect(caught.block).toContain('this turn deletes the test file src/old.test.ts')
   expect((await $.classic.Stop({})).block ?? '').not.toContain('this turn')
 })
+
+test('runs the end-of-turn checks in the background after edits and reuses the result when the turn ends', async ($, on) => {
+  const vitest = JSON.stringify({ name: 'app', scripts: { test: 'vitest' }, dependencies: { react: '19.0.0' } })
+  const { clock, runs, setTree } = world(on, { ...BASE, [`${ROOT}/package.json`]: vitest })
+  setTree('')
+
+  await edit($, `${ROOT}/src/a.ts`, 'export const a = 1')
+  await edit($, `${ROOT}/src/a.ts`, 'export const a = 2')
+  await clock.advance(1_500)
+  await clock.advance(10)
+  expect(runs).toEqual(['pnpm exec vitest run --changed'])
+
+  await $.classic.Stop({})
+  expect(runs).toEqual(['pnpm exec vitest run --changed'])
+})
+
+test('ignores a background result for an older tree and runs the checks at the end of the turn', async ($, on) => {
+  const vitest = JSON.stringify({ name: 'app', scripts: { test: 'vitest' }, dependencies: { react: '19.0.0' } })
+  const { clock, runs, setTree } = world(on, { ...BASE, [`${ROOT}/package.json`]: vitest })
+  setTree('')
+  await edit($, `${ROOT}/src/a.ts`, 'export const a = 1')
+  await clock.advance(1_510)
+  setTree('diff --git a/src/b.ts b/src/b.ts')
+
+  await $.classic.Stop({})
+  expect(runs).toEqual(['pnpm exec vitest run --changed', 'pnpm exec vitest run --changed'])
+})

@@ -8,6 +8,7 @@ const isRecord = (value) => typeof value === 'object' && value !== null && !Arra
 const skillText = (value) => typeof value === 'string' ? value : Array.isArray(value) && value.every(item => typeof item === 'string') ? value.join(', ') : undefined;
 const positive = (value) => (typeof value === 'number' && value >= 0 ? value : undefined);
 const flag = (value) => (typeof value === 'boolean' ? value : undefined);
+const backgroundMode = (value) => value === 'auto' || value === 'on' || value === 'off' ? value : undefined;
 const withoutUndefined = (record) => Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined));
 // Unknown keys and wrong types are dropped rather than trusted, so a typo can't switch a gate off by accident.
 export const parseProfile = (text) => {
@@ -31,6 +32,7 @@ export const parseProfile = (text) => {
             writingGate: flag(parsed.guardrails.writingGate),
             researchHoldLines: positive(parsed.guardrails.researchHoldLines),
             checkTimeoutMinutes: positive(parsed.guardrails.checkTimeoutMinutes),
+            backgroundChecks: backgroundMode(parsed.guardrails.backgroundChecks),
         })
         : undefined;
     const crew = isRecord(parsed.crew) ? parsed.crew : {};

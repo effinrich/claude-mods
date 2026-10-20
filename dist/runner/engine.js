@@ -6,6 +6,7 @@ import { diffSnapshots, snapshotFile } from "../core/drift.js";
 import { judgeOwnership, MARKER, parseMarker } from "../core/crew.js";
 import { renderHandoff } from "../core/handoff.js";
 import { isChangedOnly } from "../core/checks.js";
+import { backgroundResult, isBackgroundOn, triggerBackground } from "./background.js";
 import { captureTurnBase, runCheckCommands, runCheckReport, turnChanges, workTreeFingerprint } from "./run-checks.js";
 import { addedPackages, declaredDependencies, isSourceFile, parentDirs, pathAliases } from "../core/imports.js";
 import { claimedSuccess, isCoverageConfig, judgeTurnChanges, isGitCommit, isLockfile, judgeCommand, judgeProse, judgeWeakening } from "../core/rules.js";
@@ -143,7 +144,8 @@ const recordChecks = (state, root, failure) => {
 const isUnchanged = (state, root, fingerprint, needsFull = false) => (!needsFull || state.lastPassFull) &&
     (fingerprint === undefined ? isUnchangedSincePass(state, root) : state.lastResult === 'pass' && fingerprint === state.passFp);
 const runAndRecord = (config, root, state, mode) => {
-    const report = runCheckReport(config, root, loadSpec(root)?.checks ?? [], mode);
+    const ready = mode === 'turn' && isBackgroundOn(config, root) ? backgroundResult(root, workTreeFingerprint(root), config.checkTimeoutMs) : undefined;
+    const report = ready ?? runCheckReport(config, root, loadSpec(root)?.checks ?? [], mode);
     recordChecks(state, root, report.failure);
     state.lastPassFull = report.failure === undefined && (mode === 'full' || !report.labels.some(isChangedOnly));
     return { failure: report.failure, count: report.labels.length };
@@ -257,6 +259,8 @@ const decideWithState = async (tool, capabilities, config, event, root, state, n
             if (verdict.kind === 'allow' && !isCrewOnly) {
                 state.isDirty = true;
                 rememberTouched(state, event.edits.map(edit => edit.path));
+                if (config.stopGate && isBackgroundOn(config, root))
+                    triggerBackground(root);
             }
             return verdict;
         }
@@ -264,6 +268,8 @@ const decideWithState = async (tool, capabilities, config, event, root, state, n
             if (config.mods.guardrails)
                 state.isDirty = true;
             rememberTouched(state, event.paths);
+            if (config.mods.guardrails && config.stopGate && isBackgroundOn(config, root))
+                triggerBackground(root);
             return ALLOW;
         }
         case 'shell': {
